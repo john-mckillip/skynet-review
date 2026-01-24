@@ -1,41 +1,51 @@
+using SkynetReview.SecurityAgent.Services;
+using SkynetReview.Shared.Models;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+// Register the security analyzer
+builder.Services.AddScoped<ISecurityAnalyzer, SecurityAnalyzer>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
-
-var summaries = new[]
+app.MapPost("/api/security/analyze", async (
+    AnalysisRequest request,
+    ISecurityAnalyzer analyzer) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+    try
+    {
+        var startTime = DateTime.UtcNow;
+        var findings = await analyzer.AnalyzeAsync(request);
+        var duration = DateTime.UtcNow - startTime;
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
+        return Results.Ok(new AnalysisResult(
+            AgentType: "Security",
+            Findings: findings,
+            Duration: duration,
+            Success: true
+        ));
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new AnalysisResult(
+            AgentType: "Security",
+            Findings: [],
+            Duration: TimeSpan.Zero,
+            Success: false,
+            ErrorMessage: ex.Message
+        ));
+    }
 })
-.WithName("GetWeatherForecast");
+.WithName("AnalyzeSecurity");
 
-app.Run();
+app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", service = "security-agent" }))
+    .WithName("HealthCheck");
 
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+await app.RunAsync();
