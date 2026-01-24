@@ -1,0 +1,6 @@
+@SkynetReview.Gateway_HostAddress = http://localhost:5188
+
+GET {{SkynetReview.Gateway_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

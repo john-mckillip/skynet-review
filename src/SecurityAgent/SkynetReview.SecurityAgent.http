@@ -1,0 +1,6 @@
+@SkynetReview.SecurityAgent_HostAddress = http://localhost:5012
+
+GET {{SkynetReview.SecurityAgent_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

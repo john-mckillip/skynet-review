@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/FileService/">
+    <Project Path="src/FileService/SkynetReview.FileService.csproj" />
+  </Folder>
+  <Folder Name="/src/Gateway/">
+    <Project Path="src/Gateway/SkynetReview.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/src/SecurityAgent/">
+    <Project Path="src/SecurityAgent/SkynetReview.SecurityAgent.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/SkynetReview.Shared.csproj" />
+  </Folder>
+</Solution>
