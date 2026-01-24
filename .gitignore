@@ -279,3 +279,6 @@ src/SecurityAgent/appsettings.Development.json
 src/SecurityAgent/test-code.cs
 src/FileService/temp-files/*
 src/secrets/*
+
+# Rust
+**/target/
