@@ -30,6 +30,66 @@ app.MapPost("/api/analyze", async (
 })
 .WithName("AnalyzeFiles");
 
+// Upload files and analyze
+app.MapPost("/api/analyze/upload", async (
+    HttpRequest request,
+    IAgentOrchestrator orchestrator,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest("Request must be multipart/form-data");
+    }
+
+    var form = await request.ReadFormAsync();
+    var files = form.Files;
+
+    if (files.Count == 0)
+    {
+        return Results.BadRequest("No files provided");
+    }
+
+    // Upload files to File Service
+    var fileServiceUrl = configuration["ServiceEndpoints:FileServiceUrl"];
+    var client = httpClientFactory.CreateClient();
+    
+    var content = new MultipartFormDataContent();
+    foreach (var file in files)
+    {
+        var fileContent = new StreamContent(file.OpenReadStream());
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType ?? "application/octet-stream");
+        content.Add(fileContent, "file", file.FileName);
+    }
+
+    var uploadResponse = await client.PostAsync($"{fileServiceUrl}/api/files/upload", content);
+    
+    if (!uploadResponse.IsSuccessStatusCode)
+    {
+        return Results.Problem("Failed to upload files to File Service");
+    }
+
+    var uploadResult = await uploadResponse.Content.ReadFromJsonAsync<UploadResult>();
+    
+    if (uploadResult?.FileIds == null)
+    {
+        return Results.Problem("Invalid response from File Service");
+    }
+
+    // Create analysis request with file IDs
+    var analysisRequest = new AnalysisRequest(
+        FilePaths: [.. uploadResult.FileIds.Values],
+        FileContents: new Dictionary<string, string>() // Empty - will be fetched from File Service
+    );
+
+    // Analyze
+    var results = await orchestrator.AnalyzeAsync(analysisRequest);
+    
+    return Results.Ok(results);
+})
+.WithName("AnalyzeUploadedFiles")
+.DisableAntiforgery();
+
 app.MapGet("/api/health", () => Results.Ok(new 
 { 
     status = "healthy", 
