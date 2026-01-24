@@ -481,6 +481,31 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [ ] Report generation (PDF, HTML)
 - [ ] IDE extensions (VS Code, Visual Studio)
 
+## 📋 Changelog
+
+### v1.0.0 (2026-01-24)
+
+**Initial Release**
+
+- ✨ Multi-agent microservices architecture
+- 🤖 AI-powered security analysis using GitHub Copilot SDK
+- 🔍 Security Agent detecting:
+  - SQL injection vulnerabilities
+  - Hardcoded secrets and API keys
+  - Missing authentication/authorization
+  - Input validation issues
+  - Insecure cryptography
+  - CORS misconfigurations
+  - Sensitive data exposure
+- 🚀 Gateway service for request orchestration
+- 📁 File Service for upload and storage management
+- 🦀 Rust CLI with beautiful colored output
+- 🐳 Full Docker Compose setup for local development
+- 📊 Multi-file batch analysis support
+- 🔄 Two analysis workflows: direct content and file upload
+- 📝 Detailed remediation guidance for each finding
+- 🎯 Severity-based issue categorization (Critical, High, Medium, Low, Info)
+
 ---
 
 Built with 🔥 by John McKillip | Ice Nine Media
