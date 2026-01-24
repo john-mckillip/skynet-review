@@ -276,3 +276,4 @@ secrets.json
 *.sln.iml
 src/Gateway/appsettings.Development.json
 src/SecurityAgent/appsettings.Development.json
+src/SecurityAgent/test-code.cs

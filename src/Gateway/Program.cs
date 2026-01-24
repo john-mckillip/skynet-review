@@ -1,41 +1,41 @@
+using SkynetReview.Gateway.Services;
+using SkynetReview.Shared.Models;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
+builder.Services.AddHttpClient();
+
+// Register orchestrator
+builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
+
+// Service URLs from configuration
+builder.Services.Configure<ServiceEndpoints>(
+    builder.Configuration.GetSection("ServiceEndpoints"));
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-app.UseHttpsRedirection();
-
-var summaries = new[]
+app.MapPost("/api/analyze", async (
+    AnalysisRequest request,
+    IAgentOrchestrator orchestrator) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
+    var results = await orchestrator.AnalyzeAsync(request);
+    return Results.Ok(results);
 })
-.WithName("GetWeatherForecast");
+.WithName("AnalyzeFiles");
 
-app.Run();
+app.MapGet("/api/health", () => Results.Ok(new 
+{ 
+    status = "healthy", 
+    service = "gateway",
+    timestamp = DateTime.UtcNow 
+}))
+.WithName("HealthCheck");
 
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+await app.RunAsync();
