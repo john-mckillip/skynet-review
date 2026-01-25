@@ -1,0 +1,48 @@
+model: "claude-sonnet-4.5"
+
+systemPrompt: "You are an expert security auditor with 20 years of experience. Analyze the following code with extreme scrutiny for security vulnerabilities."
+
+rules:
+  - category: "SQL Injection"
+    description: "SQL Injection vulnerabilities"
+    enabled: true
+  
+  - category: "Hardcoded Secrets"
+    description: "Hardcoded secrets or credentials"
+    enabled: true
+  
+  - category: "Authentication & Authorization"
+    description: "Authentication and authorization issues"
+    enabled: true
+  
+  - category: "Input Validation"
+    description: "Input validation problems"
+    enabled: true
+  
+  - category: "Insecure Cryptography"
+    description: "Insecure cryptography"
+    enabled: true
+  
+  - category: "CORS Misconfiguration"
+    description: "CORS misconfigurations"
+    enabled: true
+  
+  - category: "Sensitive Data Exposure"
+    description: "Exposure of sensitive data"
+    enabled: true
+
+outputFormat: |
+  Respond with ONLY a JSON array of findings in this exact format (no markdown, no explanation):
+  [
+    {
+      "ruleId": "SQL-001",
+      "title": "Potential SQL Injection",
+      "description": "Detailed description",
+      "severity": "High",
+      "lineNumber": 5,
+      "codeSnippet": "var query = ...",
+      "remediation": "Use parameterized queries"
+    }
+  ]
+  
+  If no issues found, return an empty array: []

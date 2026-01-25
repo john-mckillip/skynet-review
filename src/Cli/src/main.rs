@@ -62,8 +62,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Health => {
             println!("{}", "🏥 Checking service health...".cyan().bold());
             match check_health(&client).await {
-                Ok(_) => {
-                    println!("{}", "✓ All services are healthy".green().bold());
+                Ok(health) => {
+                    println!("{} {} ({})", "✓".green().bold(), health.service, health.status);
                     Ok(())
                 }
                 Err(e) => {
@@ -109,6 +109,6 @@ async fn analyze_files(client: &ApiClient, files: Vec<PathBuf>) -> anyhow::Resul
     Ok(())
 }
 
-async fn check_health(client: &ApiClient) -> anyhow::Result<()> {
+async fn check_health(client: &ApiClient) -> anyhow::Result<models::HealthResponse> {
     client.health_check().await
 }

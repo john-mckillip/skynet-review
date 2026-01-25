@@ -26,5 +26,7 @@ RUN dotnet publish "SkynetReview.SecurityAgent.csproj" -c Release -o /app/publis
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+# Copy the security rules config file
+COPY SecurityAgent/security-rules.yml .
 
 ENTRYPOINT ["dotnet", "SkynetReview.SecurityAgent.dll"]

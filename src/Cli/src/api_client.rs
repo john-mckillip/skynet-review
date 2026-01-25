@@ -34,9 +34,9 @@ impl ApiClient {
         Ok(results)
     }
 
-    pub async fn health_check(&self) -> Result<()> {
+    pub async fn health_check(&self) -> Result<HealthResponse> {
         let url = format!("{}/api/health", self.base_url);
-        
+
         let response = self.client
             .get(&url)
             .send()
@@ -46,7 +46,7 @@ impl ApiClient {
             anyhow::bail!("Health check failed with status {}", response.status());
         }
 
-        let _health: HealthResponse = response.json().await?;
-        Ok(())
+        let health: HealthResponse = response.json().await?;
+        Ok(health)
     }
 }

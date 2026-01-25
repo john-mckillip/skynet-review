@@ -246,6 +246,212 @@ skynet-review analyze MyCode.cs
 - `DELETE /api/files/{fileId}` - Delete file
 - `GET /api/health` - Health check
 
+## ⚙️ Configuration
+
+### Security Rules Configuration
+
+The Security Agent is highly configurable through the `security-rules.yml` file located in `src/SecurityAgent/`.
+
+#### Configuration File Structure
+```yaml
+# AI Model configuration
+# Available models: gpt-4o, gpt-5, claude-sonnet-4.5, claude-opus-4.5
+model: "gpt-4o"
+
+# System prompt sent to the AI
+systemPrompt: "You are a security analysis expert. Analyze the following code for security vulnerabilities."
+
+# Security rule categories
+rules:
+  - category: "SQL Injection"
+    description: "SQL Injection vulnerabilities"
+    ruleIdPrefixes: ["SQL"]
+    keywords: ["sql", "injection", "query"]
+    enabled: true
+  
+  - category: "Hardcoded Secrets"
+    description: "Hardcoded secrets or credentials"
+    ruleIdPrefixes: ["SEC", "SECRET"]
+    keywords: ["secret", "password", "key", "token", "credential"]
+    enabled: true
+
+# Output format instructions for the AI
+outputFormat: |
+  Respond with ONLY a JSON array of findings...
+```
+
+#### Switching AI Models
+
+Change the `model` field to use different AI models:
+```yaml
+# Fast and efficient (default)
+model: "gpt-4o"
+
+# Latest and most capable
+model: "gpt-5"
+
+# Anthropic Claude models
+model: "claude-sonnet-4.5"
+model: "claude-opus-4.5"
+
+# Google Gemini models
+model: "gemini-2.0-flash-exp"
+```
+
+Different models may produce different results - experiment to find which works best for your needs!
+
+#### Enabling/Disabling Rules
+
+Turn specific rule categories on or off:
+```yaml
+rules:
+  - category: "SQL Injection"
+    description: "SQL Injection vulnerabilities"
+    ruleIdPrefixes: ["SQL"]
+    keywords: ["sql", "injection", "query"]
+    enabled: false  # <-- Disable SQL injection checks
+```
+
+**Use cases for disabling rules:**
+- Reduce noise from false positives
+- Focus on specific security concerns
+- Speed up analysis by checking fewer categories
+- Customize for different projects or teams
+
+#### Customizing the System Prompt
+
+Adjust the AI's behavior by modifying the system prompt:
+```yaml
+# More strict analysis
+systemPrompt: "You are an expert security auditor with 20 years of experience. Analyze the following code with extreme scrutiny for security vulnerabilities. Be thorough and flag even minor potential issues."
+
+# Focus on critical issues only
+systemPrompt: "You are a security expert. Focus only on critical and high-severity security vulnerabilities that could lead to data breaches or system compromise."
+
+# Industry-specific
+systemPrompt: "You are a healthcare security expert. Analyze the following code for HIPAA compliance issues and healthcare-specific security vulnerabilities."
+```
+
+#### Adding Custom Rules
+
+Add your own security rule categories:
+```yaml
+rules:
+  - category: "PII Exposure"
+    description: "Personally Identifiable Information exposure"
+    ruleIdPrefixes: ["PII", "PRIVACY"]
+    keywords: ["personal", "pii", "ssn", "email", "phone"]
+    enabled: true
+  
+  - category: "Business Logic Flaws"
+    description: "Business logic and workflow vulnerabilities"
+    ruleIdPrefixes: ["LOGIC", "BUSINESS"]
+    keywords: ["business logic", "workflow", "state"]
+    enabled: true
+```
+
+**Rule Matching:**
+- `ruleIdPrefixes`: Matches findings by their ID (e.g., "SQL-001" matches prefix "SQL")
+- `keywords`: Matches findings by title or description content
+- A finding must match *either* a prefix *or* a keyword to pass the filter
+
+#### Configuration in Docker
+
+When running with Docker, mount a custom config file:
+```yaml
+# docker-compose.yml
+services:
+  security-agent:
+    volumes:
+      - ./custom-security-rules.yml:/app/security-rules.yml
+```
+
+Or modify the default `src/SecurityAgent/security-rules.yml` before building:
+```bash
+# Edit the config
+nano src/SecurityAgent/security-rules.yml
+
+# Rebuild with new config
+docker compose up --build
+```
+
+#### Configuration Best Practices
+
+1. **Start with defaults** - The default configuration is balanced for general use
+2. **Disable incrementally** - Turn off one rule at a time and test results
+3. **Document changes** - Comment your config file explaining why rules are disabled
+4. **Version control** - Track config changes alongside code changes
+5. **Project-specific configs** - Consider different configs for different projects
+6. **Test model changes** - Different AI models behave differently; validate results
+7. **Review periodically** - Re-enable rules occasionally to catch new issues
+
+#### Example: Security-Focused Configuration
+```yaml
+model: "claude-opus-4.5"  # Most capable model
+
+systemPrompt: "You are a senior application security engineer conducting a thorough security audit. Identify all potential vulnerabilities with detailed explanations."
+
+rules:
+  - category: "SQL Injection"
+    enabled: true
+  - category: "Hardcoded Secrets"
+    enabled: true
+  - category: "Authentication & Authorization"
+    enabled: true
+  - category: "Input Validation"
+    enabled: true
+  - category: "Insecure Cryptography"
+    enabled: true
+  - category: "CORS Misconfiguration"
+    enabled: true
+  - category: "Sensitive Data Exposure"
+    enabled: true
+```
+
+#### Example: Fast Development Scan
+```yaml
+model: "gpt-4o"  # Fast model
+
+systemPrompt: "You are a security expert. Focus only on critical security vulnerabilities."
+
+rules:
+  - category: "SQL Injection"
+    enabled: true
+  - category: "Hardcoded Secrets"
+    enabled: true
+  - category: "Authentication & Authorization"
+    enabled: false  # Skip for speed
+  - category: "Input Validation"
+    enabled: false  # Skip for speed
+  - category: "Insecure Cryptography"
+    enabled: true
+  - category: "CORS Misconfiguration"
+    enabled: false  # Skip for speed
+  - category: "Sensitive Data Exposure"
+    enabled: true
+```
+
+#### Troubleshooting Configuration
+
+**Config file not loading:**
+```bash
+# Check logs for config path
+docker compose logs security-agent | grep "security rules"
+
+# Verify file exists in container
+docker compose exec security-agent ls -la security-rules.yml
+```
+
+**Rules not filtering correctly:**
+- Check that `ruleIdPrefixes` match the actual IDs returned by the AI (check logs)
+- Add more `keywords` for better matching
+- Use broad keywords like "sql", "secret", "auth" for reliable matching
+
+**AI not following instructions:**
+- Some models ignore certain prompts; try a different model
+- Be more explicit in the system prompt
+- Use the filtering mechanism rather than relying solely on the prompt
+
 ## 🛠️ Development
 
 ### Running Services Locally (without Docker)
@@ -483,12 +689,18 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 📋 Changelog
 
-### v1.0.0 (2026-01-24)
+### v1.0.0 (2026-01-25)
 
 **Initial Release**
 
 - ✨ Multi-agent microservices architecture
 - 🤖 AI-powered security analysis using GitHub Copilot SDK
+- ⚙️ **Configurable security rules via YAML**
+  - Enable/disable specific security rule categories
+  - Switch between AI models (GPT-4o, GPT-5, Claude Sonnet 4.5, Claude Opus 4.5, etc.)
+  - Customize system prompts for different analysis styles
+  - Add custom security rules with ID prefixes and keywords
+  - Filter findings based on rule configuration
 - 🔍 Security Agent detecting:
   - SQL injection vulnerabilities
   - Hardcoded secrets and API keys
@@ -505,6 +717,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - 🔄 Two analysis workflows: direct content and file upload
 - 📝 Detailed remediation guidance for each finding
 - 🎯 Severity-based issue categorization (Critical, High, Medium, Low, Info)
+
+---
+
+Built with ❤️ by [Your Name]
 
 ---
 
