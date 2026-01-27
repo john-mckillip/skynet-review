@@ -20,7 +20,7 @@ pub struct GitDiffResult {
     pub description: String,
 }
 
-/// Check if current directory is inside a git respository
+/// Check if current directory is inside a git repository
 pub fn is_git_repository() -> Result<bool> {
     let output = Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
