@@ -27,7 +27,7 @@ impl ApiClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("API request failed with status {}: {}", status, error_text);
+            anyhow::bail!("API request failed with status {status}: {error_text}");
         }
 
         let results = response.json().await?;
