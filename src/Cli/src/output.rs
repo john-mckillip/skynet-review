@@ -47,7 +47,7 @@ fn display_finding(number: usize, finding: &SecurityFinding) {
     println!("     File: {}", finding.file_path);
     
     if let Some(line) = finding.line_number {
-        println!("     Line: {}", line);
+        println!("     Line: {line}");
     }
     
     println!("     {}", finding.description);
