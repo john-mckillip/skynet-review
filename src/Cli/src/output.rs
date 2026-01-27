@@ -1,5 +1,5 @@
-use colored::*;
 use crate::models::{AnalysisResult, SecurityFinding};
+use colored::*;
 
 pub fn display_results(results: &[AnalysisResult]) {
     for result in results {
@@ -42,23 +42,28 @@ fn display_finding(number: usize, finding: &SecurityFinding) {
         _ => "INFO".white(),
     };
 
-    println!("  {}. {} [{}]", number, finding.title.bold(), severity_display);
-    println!("     ID: {}", finding.id.dimmed());  // Changed from rule_id
+    println!(
+        "  {}. {} [{}]",
+        number,
+        finding.title.bold(),
+        severity_display
+    );
+    println!("     ID: {}", finding.id.dimmed()); // Changed from rule_id
     println!("     File: {}", finding.file_path);
-    
+
     if let Some(line) = finding.line_number {
         println!("     Line: {line}");
     }
-    
+
     println!("     {}", finding.description);
-    
+
     if let Some(snippet) = &finding.code_snippet {
         println!("\n     Code:");
         println!("     {}", "─".repeat(60).dimmed());
         println!("     {}", snippet.dimmed());
         println!("     {}", "─".repeat(60).dimmed());
     }
-    
+
     println!("\n     💡 Remediation:");
     println!("     {}", finding.remediation.green());
     println!();

@@ -282,3 +282,4 @@ src/secrets/*
 
 # Rust
 **/target/
+.claude/*
