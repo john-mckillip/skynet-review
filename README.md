@@ -11,16 +11,19 @@ A microservices-based code quality and security analysis platform powered by AI.
 - **Local Development Tool**: Run comprehensive security scans directly from your terminal
 - **Beautiful CLI**: Rust-based command-line interface with colored output and intuitive commands
 - **Microservices Architecture**: Scalable, distributed system with independent, containerized services
-- **Flexible Analysis Workflows**: 
+- **Flexible Analysis Workflows**:
   - Direct file content analysis for quick scans
+  - **Git diff analysis** - analyze only changed files in your repository
   - File upload workflow for larger codebases
   - Multi-file batch analysis support
 - **Docker-First Design**: Fully containerized for consistent deployment and easy local setup
+- **Security Hardened CLI**: HTTPS enforcement, TLS 1.2+, command injection prevention, and optional API key authentication
 - **Developer-Friendly**: Designed for integration into local development workflows and CI/CD pipelines
 
 ## 💡 Use Cases
 
-- **Pre-Commit Security Checks**: Scan your code before committing to catch vulnerabilities early
+- **Pre-Commit Security Checks**: Scan staged changes before committing with `--git-diff --staged`
+- **Branch Security Review**: Analyze all changes since branching from main with `--git-diff --commit main`
 - **Local Development**: Analyze code as you write without leaving your terminal
 - **Code Review Assistance**: Get AI-powered security insights during pull request reviews
 - **Security Audits**: Batch analyze entire codebases for comprehensive security assessment
@@ -195,6 +198,27 @@ skynet-review analyze File1.cs File2.cs File3.cs
 
 # All C# files in directory
 skynet-review analyze *.cs
+```
+
+**Analyze Git Changes**
+```bash
+# Analyze all unstaged changes in working tree
+skynet-review analyze --git-diff
+
+# Analyze only staged changes (great for pre-commit checks)
+skynet-review analyze --git-diff --staged
+
+# Analyze changes since branching from main
+skynet-review analyze --git-diff --commit main
+
+# Analyze changes since a specific commit
+skynet-review analyze --git-diff --commit abc1234
+
+# Filter to specific file extensions
+skynet-review analyze --git-diff --include-ext rs,cs
+
+# Combine options
+skynet-review analyze --git-diff --commit main --include-ext rs
 ```
 
 **Custom Gateway URL**
@@ -513,6 +537,7 @@ skynet-review/
 │       ├── src/
 │       │   ├── main.rs
 │       │   ├── api_client.rs
+│       │   ├── git.rs          # Git integration for diff analysis
 │       │   ├── models.rs
 │       │   └── output.rs
 │       └── Cargo.toml
@@ -639,6 +664,7 @@ netstat -ano | findstr :5000  # Windows
 
 - `GITHUB_TOKEN`: GitHub personal access token with Copilot access
 - `SKYNET_GATEWAY_URL`: Gateway API URL (default: http://localhost:5000)
+- `SKYNET_API_KEY`: Optional API key for authenticated gateway access
 - `ASPNETCORE_ENVIRONMENT`: ASP.NET Core environment (Development/Docker/Production)
 
 ### Service Configuration Files
@@ -676,6 +702,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## 🗺️ Roadmap
 
+- [x] Git diff analysis for changed files
 - [ ] Add Performance Analysis Agent
 - [ ] Add Code Standards/Style Agent
 - [ ] Implement caching for faster analysis
@@ -688,6 +715,23 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [ ] IDE extensions (VS Code, Visual Studio)
 
 ## 📋 Changelog
+
+### v1.1.0 (2026-01-27)
+
+**Git Diff Analysis**
+
+- 🔀 **Git integration** - Analyze only changed files in your repository
+  - `--git-diff` flag to analyze uncommitted changes
+  - `--staged` flag to analyze only staged changes (pre-commit workflow)
+  - `--commit <REF>` flag to compare against a specific commit or branch
+  - `--include-ext` flag to filter by file extensions
+- 🔒 **Security hardening** in CLI
+  - Command injection prevention in git reference validation
+  - Path traversal protection for file operations
+  - HTTPS enforcement for non-localhost connections
+  - TLS 1.2 minimum version requirement
+  - Optional API key authentication via `SKYNET_API_KEY`
+- ⏱️ Extended request timeout to 120 seconds for AI analysis
 
 ### v1.0.0 (2026-01-25)
 
