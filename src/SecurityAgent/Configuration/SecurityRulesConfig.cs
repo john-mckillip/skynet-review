@@ -15,6 +15,11 @@ public class SecurityRulesConfig
     /// </summary>
     public string SystemPrompt { get; set; } = string.Empty;
     /// <summary>
+    /// Whether to include the rules list in the prompt sent to the AI model.
+    /// When false, only the system prompt and code are sent.
+    /// </summary>
+    public bool IncludeRulesInPrompt { get; set; } = true;
+    /// <summary>
     /// The list of security rules to be applied during analysis.
     /// </summary>
     public List<SecurityRule> Rules { get; set; } = [];

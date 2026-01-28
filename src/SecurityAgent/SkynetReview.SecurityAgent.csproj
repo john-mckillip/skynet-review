@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SkynetReview.SecurityAgent.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" Version="0.1.17" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.2" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />

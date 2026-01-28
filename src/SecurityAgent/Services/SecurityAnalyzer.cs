@@ -11,7 +11,7 @@ namespace SkynetReview.SecurityAgent.Services;
 public class SecurityAnalyzer : ISecurityAnalyzer
 {
     private readonly ILogger<SecurityAnalyzer> _logger;
-    private readonly SecurityRulesConfig _rulesConfig;
+    internal SecurityRulesConfig _rulesConfig;
 
     public SecurityAnalyzer(
         ILogger<SecurityAnalyzer> logger, 
@@ -89,6 +89,7 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         {
             Model = "gpt-5",
             SystemPrompt = "You are a security analysis expert. Analyze the following code for security vulnerabilities.",
+            IncludeRulesInPrompt = true,
             Rules =
             [
                 new() { Category = "SQL Injection", Description = "SQL Injection vulnerabilities", Enabled = true },
@@ -161,24 +162,27 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     /// <param name="filePath">The path of the file being analyzed.</param>
     /// <param name="content">The content of the file to analyze.</param>
     /// <returns>A string containing the prompt for Copilot.</returns>
-    private string BuildSecurityPrompt(string filePath, string content)
+    internal string BuildSecurityPrompt(string filePath, string content)
     {
         var sb = new StringBuilder();
         
         // Add system prompt from config
         sb.AppendLine(_rulesConfig.SystemPrompt);
         sb.AppendLine();
-        
-        // Add enabled rules
-        sb.AppendLine("Focus on:");
-        foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+
+        // Add enabled rules if configured
+        if (_rulesConfig.IncludeRulesInPrompt)
         {
-            sb.AppendLine($"- {rule.Description}");
+            sb.AppendLine("Focus on:");
+            foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+            {
+                sb.AppendLine($"- {rule.Description}");
+            }
+            sb.AppendLine();
         }
-        
-        sb.AppendLine();
+
         sb.AppendLine($"File: {filePath}");
-        sb.AppendLine("```csharp");
+        sb.AppendLine($"```{GetLanguageFromFilePath(filePath)}");
         sb.AppendLine(content);
         sb.AppendLine("```");
         sb.AppendLine();
@@ -245,6 +249,46 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         return findings;
     }
     
+    /// <summary>
+    /// Gets the markdown language identifier for a file based on its extension.
+    /// </summary>
+    /// <param name="filePath">The file path to get the language for.</param>
+    /// <returns>A markdown language identifier string.</returns>
+    internal static string GetLanguageFromFilePath(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".cs" => "csharp",
+            ".js" => "javascript",
+            ".ts" => "typescript",
+            ".jsx" => "jsx",
+            ".tsx" => "tsx",
+            ".py" => "python",
+            ".java" => "java",
+            ".go" => "go",
+            ".rs" => "rust",
+            ".rb" => "ruby",
+            ".php" => "php",
+            ".swift" => "swift",
+            ".kt" or ".kts" => "kotlin",
+            ".scala" => "scala",
+            ".c" or ".h" => "c",
+            ".cpp" or ".cc" or ".cxx" or ".hpp" => "cpp",
+            ".sql" => "sql",
+            ".html" or ".htm" => "html",
+            ".css" => "css",
+            ".scss" => "scss",
+            ".json" => "json",
+            ".xml" => "xml",
+            ".yaml" or ".yml" => "yaml",
+            ".sh" or ".bash" => "bash",
+            ".ps1" => "powershell",
+            ".md" => "markdown",
+            _ => "text"
+        };
+    }
+
     /// <summary>
     /// Parses the severity string into a Severity enum.
     /// </summary>

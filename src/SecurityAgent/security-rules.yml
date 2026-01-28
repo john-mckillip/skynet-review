@@ -2,6 +2,10 @@ model: "claude-sonnet-4.5"
 
 systemPrompt: "You are an expert security auditor with 20 years of experience. Analyze the following code with extreme scrutiny for security vulnerabilities."
 
+# When true, the enabled rules below are added to the prompt as a "Focus on:" list.
+# When false, only the systemPrompt is used (useful if your systemPrompt already contains instructions).
+includeRulesInPrompt: true
+
 rules:
   - category: "SQL Injection"
     description: "SQL Injection vulnerabilities"

@@ -1,0 +1,62 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Gateway",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-gateway",
+            "program": "${workspaceFolder}/src/Gateway/bin/Debug/net10.0/SkynetReview.Gateway.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/Gateway",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "Launch FileService",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-fileservice",
+            "program": "${workspaceFolder}/src/FileService/bin/Debug/net10.0/SkynetReview.FileService.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/FileService",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "Launch SecurityAgent",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-securityagent",
+            "program": "${workspaceFolder}/src/SecurityAgent/bin/Debug/net10.0/SkynetReview.SecurityAgent.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/src/SecurityAgent",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development"
+            }
+        },
+        {
+            "name": "Debug SecurityAgent Tests",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-securityagent-tests",
+            "program": "dotnet",
+            "args": [
+                "test",
+                "${workspaceFolder}/tests/SkynetReview.SecurityAgent.Tests/SkynetReview.SecurityAgent.Tests.csproj",
+                "--no-build"
+            ],
+            "cwd": "${workspaceFolder}/tests/SkynetReview.SecurityAgent.Tests",
+            "console": "integratedTerminal",
+            "stopAtEntry": false
+        }
+    ]
+}
