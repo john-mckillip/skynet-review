@@ -11,9 +11,9 @@
   <!-- Coverlet code coverage configuration -->
   <PropertyGroup>
     <CollectCoverage>true</CollectCoverage>
-    <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
+    <ExcludeByAttribute>GeneratedCodeAttribute</ExcludeByAttribute>
     <ExcludeByFile>**/Program.cs</ExcludeByFile>
-    <Exclude>[*]Microsoft.AspNetCore.OpenApi.Generated.*,[*]System.Runtime.CompilerServices.*</Exclude>
+    <Exclude>[*]Microsoft.AspNetCore.OpenApi.Generated.*</Exclude>
   </PropertyGroup>
 
   <ItemGroup>

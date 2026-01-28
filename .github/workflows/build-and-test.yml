@@ -112,9 +112,9 @@ jobs:
             --results-directory ./TestResults \
             --collect:"XPlat Code Coverage" \
             -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
-               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Microsoft.AspNetCore.OpenApi.Generated.*,[*]System.Runtime.CompilerServices.*" \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Microsoft.AspNetCore.OpenApi.Generated.*" \
                DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Program.cs" \
-               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute="GeneratedCodeAttribute,CompilerGeneratedAttribute"
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute="GeneratedCodeAttribute"
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1
