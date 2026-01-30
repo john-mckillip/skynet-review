@@ -153,7 +153,7 @@ impl ApiClient {
                             }
                         }
                         Some("error") => {
-                            anyhow::bail!("Server error: {}", data);
+                            anyhow::bail!("Server error: {data}");
                         }
                         Some("complete") => {
                             // Stream completed successfully
