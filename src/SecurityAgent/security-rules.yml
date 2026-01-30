@@ -1,10 +1,10 @@
-model: "claude-sonnet-4.5"
+model: "GPT-5 mini"
 
-systemPrompt: "You are an expert security auditor with 20 years of experience. Analyze the following code with extreme scrutiny for security vulnerabilities."
+systemPrompt: "You are a security expert. Focus only on critical and high-severity security vulnerabilities that could lead to data breaches or system compromise."
 
 # When true, the enabled rules below are added to the prompt as a "Focus on:" list.
 # When false, only the systemPrompt is used (useful if your systemPrompt already contains instructions).
-includeRulesInPrompt: true
+includeRulesInPrompt: false
 
 rules:
   - category: "SQL Injection"
