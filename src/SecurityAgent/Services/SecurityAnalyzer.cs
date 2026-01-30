@@ -1,6 +1,7 @@
 using GitHub.Copilot.SDK;
 using SkynetReview.Shared.Models;
 using SkynetReview.SecurityAgent.Configuration;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using YamlDotNet.Serialization;
@@ -44,6 +45,37 @@ public class SecurityAnalyzer : ISecurityAnalyzer
 
         _logger.LogInformation("Security analysis complete. Found {FindingCount} issues", findings.Count);
         return [.. findings];
+    }
+
+    public async IAsyncEnumerable<SecurityFinding> AnalyzeStreamAsync(
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting streaming security analysis for {FileCount} files", request.FilePaths.Length);
+
+        await using var client = new CopilotClient();
+        await client.StartAsync(cancellationToken);
+
+        foreach (var filePath in request.FilePaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!request.FileContents.TryGetValue(filePath, out var content))
+            {
+                _logger.LogWarning("File content not found for {FilePath}", filePath);
+                continue;
+            }
+
+            _logger.LogInformation("Analyzing file: {FilePath}", filePath);
+            var fileFindings = await AnalyzeFileAsync(client, filePath, content);
+
+            foreach (var finding in fileFindings)
+            {
+                yield return finding;
+            }
+        }
+
+        _logger.LogInformation("Streaming security analysis complete");
     }
 
     /// <summary>
@@ -117,7 +149,8 @@ public class SecurityAnalyzer : ISecurityAnalyzer
 
         await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Model = _rulesConfig.Model
+            Model = _rulesConfig.Model,
+            Streaming = true
         });
 
         var prompt = BuildSecurityPrompt(filePath, content);

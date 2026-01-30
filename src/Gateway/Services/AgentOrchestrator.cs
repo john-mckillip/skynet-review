@@ -1,5 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using SkynetReview.Shared.Models;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 
 namespace SkynetReview.Gateway.Services;
 
@@ -33,6 +35,99 @@ public class AgentOrchestrator(
         
         _logger.LogInformation("Analysis orchestration complete. Total agents: {AgentCount}", results.Count);
         return results.ToArray();
+    }
+
+    public async IAsyncEnumerable<SecurityFinding> AnalyzeStreamAsync(
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting streaming analysis orchestration for {FileCount} files", request.FilePaths.Length);
+
+        // If FileContents is empty but we have FilePaths, try to fetch from File Service
+        if (request.FileContents.Count == 0 && request.FilePaths.Length > 0)
+        {
+            _logger.LogInformation("No file contents provided, fetching from File Service");
+            request = await EnrichRequestWithFileContentsAsync(request);
+        }
+
+        // Stream from Security Agent
+        await foreach (var finding in CallSecurityAgentStreamAsync(request, cancellationToken))
+        {
+            yield return finding;
+        }
+
+        _logger.LogInformation("Streaming analysis orchestration complete");
+    }
+
+    private async IAsyncEnumerable<SecurityFinding> CallSecurityAgentStreamAsync(
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient();
+        var url = $"{_endpoints.Value.SecurityAgentUrl}/api/security/analyze/stream";
+
+        _logger.LogInformation("Calling Security Agent stream at {Url}", url);
+
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(request)
+        };
+
+        using var response = await client.SendAsync(
+            httpRequest,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError("Security Agent stream returned {StatusCode}: {Error}",
+                response.StatusCode, errorContent);
+            yield break;
+        }
+
+        using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        string? eventType = null;
+        string? line;
+
+        while ((line = await reader.ReadLineAsync(cancellationToken)) != null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrEmpty(line))
+            {
+                eventType = null;
+                continue;
+            }
+
+            if (line.StartsWith("event: "))
+            {
+                eventType = line.Substring(7);
+            }
+            else if (line.StartsWith("data: "))
+            {
+                var json = line.Substring(6);
+
+                if (eventType == "finding")
+                {
+                    var finding = JsonSerializer.Deserialize<SecurityFinding>(json);
+                    if (finding != null)
+                    {
+                        yield return finding;
+                    }
+                }
+                else if (eventType == "error")
+                {
+                    _logger.LogError("Security Agent stream error: {Error}", json);
+                }
+                else if (eventType == "complete")
+                {
+                    _logger.LogInformation("Security Agent stream completed: {Summary}", json);
+                }
+            }
+        }
     }
 
     private async Task<AnalysisRequest> EnrichRequestWithFileContentsAsync(AnalysisRequest request)

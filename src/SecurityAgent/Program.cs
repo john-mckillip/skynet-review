@@ -1,5 +1,6 @@
 using SkynetReview.SecurityAgent.Services;
 using SkynetReview.Shared.Models;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,6 +45,47 @@ app.MapPost("/api/security/analyze", async (
     }
 })
 .WithName("AnalyzeSecurity");
+
+app.MapPost("/api/security/analyze/stream", async (
+    AnalysisRequest request,
+    ISecurityAnalyzer analyzer,
+    HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.Append("Content-Type", "text/event-stream");
+    context.Response.Headers.Append("Cache-Control", "no-cache");
+    context.Response.Headers.Append("Connection", "keep-alive");
+
+    var startTime = DateTime.UtcNow;
+    var findingCount = 0;
+
+    try
+    {
+        await foreach (var finding in analyzer.AnalyzeStreamAsync(request, cancellationToken))
+        {
+            findingCount++;
+            var json = JsonSerializer.Serialize(finding);
+            await context.Response.WriteAsync($"event: finding\ndata: {json}\n\n", cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
+        }
+
+        var duration = DateTime.UtcNow - startTime;
+        var summary = new { AgentType = "Security", FindingCount = findingCount, Duration = duration.ToString(), Success = true };
+        var summaryJson = JsonSerializer.Serialize(summary);
+        await context.Response.WriteAsync($"event: complete\ndata: {summaryJson}\n\n", cancellationToken);
+    }
+    catch (OperationCanceledException)
+    {
+        // Client disconnected - this is expected
+    }
+    catch (Exception ex)
+    {
+        var error = new { Success = false, ErrorMessage = ex.Message };
+        var errorJson = JsonSerializer.Serialize(error);
+        await context.Response.WriteAsync($"event: error\ndata: {errorJson}\n\n", CancellationToken.None);
+    }
+})
+.WithName("AnalyzeSecurityStream");
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", service = "security-agent" }))
     .WithName("HealthCheck");

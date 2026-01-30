@@ -200,11 +200,28 @@ async fn analyze_files(client: &ApiClient, files: Vec<PathBuf>) -> anyhow::Resul
         repository_context: None,
     };
 
-    // Call API
-    let results = client.analyze(request).await?;
+    // Reset counter and stream findings
+    output::reset_finding_counter();
+    println!("{}", "Security Analysis (streaming)".green().bold());
+    println!();
 
-    // Display results
-    output::display_results(&results);
+    let mut finding_count = 0;
+    client
+        .analyze_stream(request, |finding| {
+            finding_count += 1;
+            output::display_finding_streaming(&finding);
+        })
+        .await?;
+
+    if finding_count == 0 {
+        println!("  {}", "No issues found!".green());
+    } else {
+        println!(
+            "\n{} Found {} issue(s)",
+            "Summary:".cyan().bold(),
+            finding_count
+        );
+    }
 
     Ok(())
 }
