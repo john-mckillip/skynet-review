@@ -29,12 +29,10 @@ impl ApiClient {
         // Get optional API key from environment
         let api_key = std::env::var("SKYNET_API_KEY").ok();
 
-        // Build client with timeout and explicit TLS config
-        // Use longer timeout for AI analysis which can take time
+        // Build client with timeouts (rustls-tls uses TLS 1.2+ by default)
         let client = Client::builder()
-            .timeout(Duration::from_secs(120)) // 2 minutes for analysis
+            .timeout(Duration::from_secs(600)) // 10 minutes for long-running analysis
             .connect_timeout(Duration::from_secs(10))
-            .min_tls_version(reqwest::tls::Version::TLS_1_2)
             .build()
             .context("Failed to create HTTP client")?;
 
@@ -127,7 +125,7 @@ impl ApiClient {
         let mut event_type: Option<String> = None;
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.context("Error reading stream")?;
+            let chunk = chunk.map_err(|e| anyhow::anyhow!("Stream read error: {e}"))?;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
 
@@ -148,8 +146,9 @@ impl ApiClient {
                 } else if let Some(data) = line.strip_prefix("data: ") {
                     match event_type.as_deref() {
                         Some("finding") => {
-                            if let Ok(finding) = serde_json::from_str::<SecurityFinding>(data) {
-                                on_finding(finding);
+                            match serde_json::from_str::<SecurityFinding>(data) {
+                                Ok(finding) => on_finding(finding),
+                                Err(e) => eprintln!("Warning: Failed to parse finding: {e} (data: {data})"),
                             }
                         }
                         Some("error") => {

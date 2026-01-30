@@ -179,7 +179,10 @@ public class SecurityAnalyzer : ISecurityAnalyzer
             findings = ParseCopilotResponse(responseContent.ToString(), filePath);
 
             // Filter out findings for disabled rule categories
-            findings = FilterFindingsByEnabledRules(findings);
+            if (_rulesConfig.IncludeRulesInPrompt)
+            {
+                findings = FilterFindingsByEnabledRules(findings);
+            }  
         }
         catch (Exception ex)
         {
@@ -348,42 +351,56 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     {
         var enabledCategories = _rulesConfig.Rules
             .Where(r => r.Enabled)
-            .Select(r => r.Category.ToLower())
+            .Select(r => NormalizeForMatching(r.Category))
             .ToHashSet();
 
         return [.. findings.Where(finding =>
         {
-            // Try to match finding to a rule category
-            // Check if any enabled category is a substring of the finding, or vice versa
+            // Normalize all finding fields for comparison
+            var findingTitle = NormalizeForMatching(finding.Title);
+            var findingId = NormalizeForMatching(finding.Id);
+            var findingDescription = NormalizeForMatching(finding.Description);
+
+            // Try to match finding to a rule category using keyword overlap
             var matchesCategory = enabledCategories.Any(category =>
             {
-                var findingTitle = finding.Title.ToLower();
-                var findingId = finding.Id.ToLower();
-                var findingDescription = finding.Description.ToLower();
-                
-                // Remove common suffixes/prefixes for matching
-                var categoryNormalized = category.Replace(" ", "").Replace("s", "");
-                var titleNormalized = findingTitle.Replace(" ", "").Replace("s", "");
-                var idNormalized = findingId.Replace("-", "").Replace("s", "");
-                
-                // Match if category contains any key words from the finding or vice versa
-                return findingTitle.Contains(category) || 
+                // Extract key words from category (split and filter short words)
+                var categoryWords = category.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => w.Length > 3)
+                    .ToList();
+
+                // Check if any category keyword appears in the finding
+                var hasKeywordMatch = categoryWords.Any(word =>
+                    findingTitle.Contains(word) ||
+                    findingDescription.Contains(word) ||
+                    findingId.Contains(word));
+
+                // Also check full category match
+                return hasKeywordMatch ||
+                    findingTitle.Contains(category) ||
                     category.Contains(findingTitle) ||
-                    findingId.Contains(category.Replace(" ", "")) ||
-                    findingDescription.Contains(category) ||
-                    titleNormalized.Contains(categoryNormalized) ||
-                    categoryNormalized.Contains(titleNormalized) ||
-                    idNormalized.Contains(categoryNormalized);
+                    findingDescription.Contains(category);
             });
 
             if (!matchesCategory)
             {
-                _logger.LogInformation("Filtering out finding {Id} - {Title} (no matching enabled category)", 
+                _logger.LogInformation("Filtering out finding {Id} - {Title} (no matching enabled category)",
                     finding.Id, finding.Title);
             }
 
             return matchesCategory;
         })];
+    }
+
+    /// <summary>
+    /// Normalizes text for fuzzy matching by lowercasing, replacing ampersand with 'and', and removing special characters.
+    /// </summary>
+    private static string NormalizeForMatching(string text)
+    {
+        return text.ToLower()
+            .Replace("&", "and")
+            .Replace("-", " ")
+            .Replace("_", " ");
     }
 
     /// <summary>

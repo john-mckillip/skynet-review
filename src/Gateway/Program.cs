@@ -2,11 +2,23 @@ using SkynetReview.Gateway.Services;
 using SkynetReview.Shared.Models;
 using System.Text.Json;
 
+// Configure JSON serialization to use camelCase for API responses
+var jsonOptions = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+};
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
-builder.Services.AddHttpClient();
+
+// Configure HttpClient with extended timeout for long-running analysis
+builder.Services.AddHttpClient("SecurityAgent", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(10); // Extended timeout for AI analysis
+});
+builder.Services.AddHttpClient(); // Default client for other uses
 
 // Register orchestrator
 builder.Services.AddScoped<IAgentOrchestrator, AgentOrchestrator>();
@@ -35,6 +47,7 @@ app.MapPost("/api/analyze/stream", async (
     AnalysisRequest request,
     IAgentOrchestrator orchestrator,
     HttpContext context,
+    ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
     context.Response.Headers.Append("Content-Type", "text/event-stream");
@@ -46,28 +59,41 @@ app.MapPost("/api/analyze/stream", async (
 
     try
     {
+        // Send initial event to confirm stream is active
+        await context.Response.WriteAsync($"event: started\ndata: {{\"fileCount\":{request.FilePaths.Length}}}\n\n", cancellationToken);
+        await context.Response.Body.FlushAsync(cancellationToken);
+
         await foreach (var finding in orchestrator.AnalyzeStreamAsync(request, cancellationToken))
         {
             findingCount++;
-            var json = JsonSerializer.Serialize(finding);
+            var json = JsonSerializer.Serialize(finding, jsonOptions);
             await context.Response.WriteAsync($"event: finding\ndata: {json}\n\n", cancellationToken);
             await context.Response.Body.FlushAsync(cancellationToken);
         }
 
         var duration = DateTime.UtcNow - startTime;
         var summary = new { TotalFindings = findingCount, Duration = duration.ToString(), Success = true };
-        var summaryJson = JsonSerializer.Serialize(summary);
+        var summaryJson = JsonSerializer.Serialize(summary, jsonOptions);
         await context.Response.WriteAsync($"event: complete\ndata: {summaryJson}\n\n", cancellationToken);
     }
-    catch (OperationCanceledException)
+    catch (OperationCanceledException ex)
     {
-        // Client disconnected - expected
+        // Client disconnected - expected behavior, log as debug
+        logger.LogDebug(ex, "Stream cancelled by client");
     }
     catch (Exception ex)
     {
-        var error = new { Success = false, ErrorMessage = ex.Message };
-        var errorJson = JsonSerializer.Serialize(error);
-        await context.Response.WriteAsync($"event: error\ndata: {errorJson}\n\n", CancellationToken.None);
+        logger.LogError(ex, "Error in streaming analysis");
+        try
+        {
+            var error = new { Success = false, ErrorMessage = ex.Message };
+            var errorJson = JsonSerializer.Serialize(error, jsonOptions);
+            await context.Response.WriteAsync($"event: error\ndata: {errorJson}\n\n", CancellationToken.None);
+        }
+        catch
+        {
+            // Response may already be closed - ignore
+        }
     }
 })
 .WithName("AnalyzeFilesStream");

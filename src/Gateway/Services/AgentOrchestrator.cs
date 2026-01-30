@@ -14,6 +14,11 @@ public class AgentOrchestrator(
     private readonly IOptions<ServiceEndpoints> _endpoints = endpoints;
     private readonly ILogger<AgentOrchestrator> _logger = logger;
 
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     public async Task<AnalysisResult[]> AnalyzeAsync(AnalysisRequest request)
     {
         _logger.LogInformation("Starting analysis orchestration for {FileCount} files", request.FilePaths.Length);
@@ -63,7 +68,7 @@ public class AgentOrchestrator(
         AnalysisRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("SecurityAgent");
         var url = $"{_endpoints.Value.SecurityAgentUrl}/api/security/analyze/stream";
 
         _logger.LogInformation("Calling Security Agent stream at {Url}", url);
@@ -112,7 +117,7 @@ public class AgentOrchestrator(
 
                 if (eventType == "finding")
                 {
-                    var finding = JsonSerializer.Deserialize<SecurityFinding>(json);
+                    var finding = JsonSerializer.Deserialize<SecurityFinding>(json, JsonOptions);
                     if (finding != null)
                     {
                         yield return finding;
@@ -171,7 +176,7 @@ public class AgentOrchestrator(
 
     private async Task<AnalysisResult> CallSecurityAgentAsync(AnalysisRequest request)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("SecurityAgent");
         var url = $"{_endpoints.Value.SecurityAgentUrl}/api/security/analyze";
         
         _logger.LogInformation("Calling Security Agent at {Url}", url);
