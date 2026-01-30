@@ -152,20 +152,44 @@ public class SecurityAnalyzer : ISecurityAnalyzer
             Model = _rulesConfig.Model,
             Streaming = true
         });
-
+        
         var prompt = BuildSecurityPrompt(filePath, content);
         var responseContent = new StringBuilder();
         var done = new TaskCompletionSource();
 
         session.On(evt =>
         {
-            if (evt is AssistantMessageEvent msg)
+            _logger.LogDebug("Copilot event received: {EventType}", evt.GetType().Name);
+
+            switch (evt)
             {
-                responseContent.Append(msg.Data.Content);
-            }
-            else if (evt is SessionIdleEvent)
-            {
-                done.SetResult();
+                case AssistantMessageDeltaEvent delta:
+                    // Incremental text chunk
+                    responseContent.Append(delta.Data.DeltaContent);
+                    break;
+                case AssistantReasoningDeltaEvent reasoningDelta:
+                     // Incremental reasoning chunk (model-dependent)
+                    responseContent.Append(reasoningDelta.Data.DeltaContent);
+                    break;
+                case AssistantMessageEvent msg:
+                    // Final complete message
+                    responseContent.Append(msg.Data.Content);
+                    break;
+                case AssistantReasoningEvent reasoning:
+                    // Final reasoning content
+                    responseContent.Append(reasoning.Data.Content);
+                    break;
+                case SessionIdleEvent:
+                    _logger.LogDebug("Session idle. Response length: {Length}", responseContent.Length);
+                    done.SetResult();
+                    break;
+                case SessionErrorEvent error:
+                    _logger.LogError("Copilot session error: {Error}", error.Data?.Message ?? "Unknown error");
+                    done.TrySetException(new Exception(error.Data?.Message ?? "Copilot session error"));
+                    break;
+                default:
+                    _logger.LogWarning("Unhandled Copilot event type: {EventType}", evt.GetType().FullName);
+                    break;
             }
         });
 
