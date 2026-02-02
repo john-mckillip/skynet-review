@@ -432,6 +432,7 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     /// </summary>
     private sealed class CopilotFinding
     {
+        public string? FilePath { get; set; } = null;
         /// <summary>
         /// The unique identifier of the security rule.
         /// </summary>

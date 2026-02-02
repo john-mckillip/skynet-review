@@ -7,6 +7,18 @@ namespace SkynetReview.SecurityAgent.Configuration;
 public class SecurityRulesConfig
 {
     /// <summary>
+    /// The number of code files to process in a single batch.
+    /// </summary>
+    public int BatchSize { get; set; } = 5;
+    /// <summary>
+    /// The maximum number of tokens allowed in a single batch for AI processing.
+    /// </summary>
+    public int MaxBatchTokens { get; set; } =  100000;
+    /// <summary>
+    /// Whether to enable batching of code files for analysis.
+    /// </summary>
+    public bool EnableBatching { get; set; } = true;
+    /// <summary>
     /// The AI model used for security analysis.
     /// </summary>
     public string Model { get; set; } = "gpt-5"; 

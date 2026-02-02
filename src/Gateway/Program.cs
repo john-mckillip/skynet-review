@@ -139,7 +139,7 @@ app.MapPost("/api/analyze/upload", async (
 
     var uploadResult = await uploadResponse.Content.ReadFromJsonAsync<UploadResult>();
     
-    if (uploadResult?.FileIds == null)
+    if (uploadResult?.FileIds is null)
     {
         return Results.Problem("Invalid response from File Service");
     }
