@@ -1,5 +1,10 @@
 model: "GPT-5 mini"
 
+# Batching configuration
+enableBatching: true
+batchSize: 5
+maxBatchTokens: 100000
+
 systemPrompt: "You are a security expert. Focus only on critical and high-severity security vulnerabilities that could lead to data breaches or system compromise."
 
 # When true, the enabled rules below are added to the prompt as a "Focus on:" list.
@@ -36,9 +41,11 @@ rules:
     enabled: true
 
 outputFormat: |
-  Respond with ONLY a JSON array of findings in this exact format (no markdown, no explanation):
+  Respond with ONLY a JSON array of findings in this exact format (no markdown, no explanation).
+  IMPORTANT: Each finding MUST include the "filePath" field matching one of the analyzed files.
   [
     {
+      "filePath": "path/to/file.cs",
       "ruleId": "SQL-001",
       "title": "Potential SQL Injection",
       "description": "Detailed description",
@@ -48,5 +55,5 @@ outputFormat: |
       "remediation": "Use parameterized queries"
     }
   ]
-  
+
   If no issues found, return an empty array: []

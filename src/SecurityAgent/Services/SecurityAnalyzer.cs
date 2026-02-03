@@ -31,16 +31,30 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         await using var client = new CopilotClient();
         await client.StartAsync();
 
-        foreach (var filePath in request.FilePaths)
+        if (_rulesConfig.EnableBatching && request.FilePaths.Length > 1)
         {
-            if (!request.FileContents.TryGetValue(filePath, out var content))
-            {
-                _logger.LogWarning("File content not found for {FilePath}", filePath);
-                continue;
-            }
+            var batches = CreateBatches(request.FilePaths, request.FileContents);
+            _logger.LogInformation("Created {BatchCount} batches for analysis", batches.Count);
 
-            var fileFindings = await AnalyzeFileAsync(client, filePath, content);
-            findings.AddRange(fileFindings);
+            foreach (var batch in batches)
+            {
+                var batchFindings = await AnalyzeBatchAsync(client, batch);
+                findings.AddRange(batchFindings);
+            }
+        }
+        else
+        {
+            foreach (var filePath in request.FilePaths)
+            {
+                if (!request.FileContents.TryGetValue(filePath, out var content))
+                {
+                    _logger.LogWarning("File content not found for {FilePath}", filePath);
+                    continue;
+                }
+
+                var fileFindings = await AnalyzeFileAsync(client, filePath, content);
+                findings.AddRange(fileFindings);
+            }
         }
 
         _logger.LogInformation("Security analysis complete. Found {FindingCount} issues", findings.Count);
@@ -56,6 +70,44 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         await using var client = new CopilotClient();
         await client.StartAsync(cancellationToken);
 
+        var useBatching = _rulesConfig.EnableBatching && request.FilePaths.Length > 1;
+        var findings = useBatching
+            ? StreamBatchedAnalysis(client, request, cancellationToken)
+            : StreamIndividualAnalysis(client, request, cancellationToken);
+
+        await foreach (var finding in findings)
+        {
+            yield return finding;
+        }
+
+        _logger.LogInformation("Streaming security analysis complete");
+    }
+
+    private async IAsyncEnumerable<SecurityFinding> StreamBatchedAnalysis(
+        CopilotClient client,
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var batches = CreateBatches(request.FilePaths, request.FileContents);
+        _logger.LogInformation("Created {BatchCount} batches for streaming analysis", batches.Count);
+
+        foreach (var batch in batches)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogInformation("Processing batch of {FileCount} files", batch.Count);
+
+            foreach (var finding in await AnalyzeBatchAsync(client, batch))
+            {
+                yield return finding;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<SecurityFinding> StreamIndividualAnalysis(
+        CopilotClient client,
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         foreach (var filePath in request.FilePaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -67,15 +119,12 @@ public class SecurityAnalyzer : ISecurityAnalyzer
             }
 
             _logger.LogInformation("Analyzing file: {FilePath}", filePath);
-            var fileFindings = await AnalyzeFileAsync(client, filePath, content);
 
-            foreach (var finding in fileFindings)
+            foreach (var finding in await AnalyzeFileAsync(client, filePath, content))
             {
                 yield return finding;
             }
         }
-
-        _logger.LogInformation("Streaming security analysis complete");
     }
 
     /// <summary>
@@ -119,7 +168,7 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     {
         return new SecurityRulesConfig
         {
-            Model = "gpt-5",
+            Model = "gpt-5 mini",
             SystemPrompt = "You are a security analysis expert. Analyze the following code for security vulnerabilities.",
             IncludeRulesInPrompt = true,
             Rules =
@@ -251,6 +300,250 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         sb.AppendLine(_rulesConfig.OutputFormat);
 
         return sb.ToString();
+    }
+
+    internal string BuildBatchedSecurityPrompt(Dictionary<string, string> files)
+    {
+        var sb = new StringBuilder();
+
+        // Add system prompt from config
+        sb.AppendLine(_rulesConfig.SystemPrompt);
+        sb.AppendLine();
+
+        // Add enabled rules if configured
+        if (_rulesConfig.IncludeRulesInPrompt)
+        {
+            sb.AppendLine("Focus on:");
+            foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+            {
+                sb.AppendLine($"- {rule.Description}");
+            }
+            sb.AppendLine();
+        }
+
+        foreach (var (filePath, content) in files)
+        {
+            sb.AppendLine($"File: {filePath}");
+            sb.AppendLine($"```{GetLanguageFromFilePath(filePath)}");
+            sb.AppendLine(content);
+            sb.AppendLine("```");
+            sb.AppendLine();
+        }
+
+        // Add output format from config
+        sb.AppendLine(_rulesConfig.OutputFormat);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Analyzes a batch of files for security issues using a single Copilot session.
+    /// </summary>
+    private async Task<List<SecurityFinding>> AnalyzeBatchAsync(
+        CopilotClient client,
+        Dictionary<string, string> batch)
+    {
+        var findings = new List<SecurityFinding>();
+        var validFilePaths = batch.Keys.ToHashSet();
+
+        _logger.LogInformation("Analyzing batch of {FileCount} files: {Files}",
+            batch.Count,
+            string.Join(", ", batch.Keys.Select(Path.GetFileName)));
+
+        await using var session = await client.CreateSessionAsync(new SessionConfig
+        {
+            Model = _rulesConfig.Model,
+            Streaming = true
+        });
+
+        var prompt = BuildBatchedSecurityPrompt(batch);
+        var responseContent = new StringBuilder();
+        var done = new TaskCompletionSource();
+
+        session.On(evt =>
+        {
+            _logger.LogDebug("Copilot event received: {EventType}", evt.GetType().Name);
+
+            switch (evt)
+            {
+                case AssistantMessageDeltaEvent delta:
+                    responseContent.Append(delta.Data.DeltaContent);
+                    break;
+                case AssistantReasoningDeltaEvent reasoningDelta:
+                    responseContent.Append(reasoningDelta.Data.DeltaContent);
+                    break;
+                case AssistantMessageEvent msg:
+                    responseContent.Append(msg.Data.Content);
+                    break;
+                case AssistantReasoningEvent reasoning:
+                    responseContent.Append(reasoning.Data.Content);
+                    break;
+                case SessionIdleEvent:
+                    _logger.LogDebug("Session idle. Response length: {Length}", responseContent.Length);
+                    done.SetResult();
+                    break;
+                case SessionErrorEvent error:
+                    _logger.LogError("Copilot session error: {Error}", error.Data?.Message ?? "Unknown error");
+                    done.TrySetException(new Exception(error.Data?.Message ?? "Copilot session error"));
+                    break;
+            }
+        });
+
+        try
+        {
+            await session.SendAsync(new MessageOptions { Prompt = prompt });
+            await done.Task;
+
+            _logger.LogInformation("Received batch response from Copilot for {FileCount} files", batch.Count);
+
+            findings = ParseBatchedCopilotResponse(responseContent.ToString(), validFilePaths);
+
+            if (_rulesConfig.IncludeRulesInPrompt)
+            {
+                findings = FilterFindingsByEnabledRules(findings);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing batch of {FileCount} files", batch.Count);
+
+            // Fallback: try analyzing files individually
+            _logger.LogWarning("Falling back to individual file analysis for failed batch");
+            foreach (var (filePath, content) in batch)
+            {
+                try
+                {
+                    var fileFindings = await AnalyzeFileAsync(client, filePath, content);
+                    findings.AddRange(fileFindings);
+                }
+                catch (Exception fileEx)
+                {
+                    _logger.LogError(fileEx, "Error analyzing file {FilePath}", filePath);
+                }
+            }
+        }
+
+        return findings;
+    }
+
+    /// <summary>
+    /// Parses the Copilot response for batched multi-file analysis.
+    /// </summary>
+    internal List<SecurityFinding> ParseBatchedCopilotResponse(
+        string response,
+        HashSet<string> validFilePaths)
+    {
+        var findings = new List<SecurityFinding>();
+        var parsedFindings = ExtractFindingsFromJson(response);
+
+        if (parsedFindings is null)
+            return findings;
+
+        foreach (var finding in parsedFindings)
+        {
+            var converted = TryConvertToSecurityFinding(finding, validFilePaths);
+            if (converted is not null)
+                findings.Add(converted);
+        }
+
+        return findings;
+    }
+
+    /// <summary>
+    /// Extracts and deserializes findings from a JSON response string.
+    /// </summary>
+    private CopilotFinding[]? ExtractFindingsFromJson(string response)
+    {
+        var jsonStart = response.IndexOf('[');
+        var jsonEnd = response.LastIndexOf(']');
+
+        if (jsonStart < 0 || jsonEnd <= jsonStart)
+        {
+            _logger.LogWarning("No JSON array found in batched response");
+            return null;
+        }
+
+        try
+        {
+            var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
+            _logger.LogDebug("Parsing batched JSON response: {Json}", json);
+
+            return JsonSerializer.Deserialize<CopilotFinding[]>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse batched Copilot response");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Converts a CopilotFinding to a SecurityFinding, validating the file path.
+    /// </summary>
+    private SecurityFinding? TryConvertToSecurityFinding(
+        CopilotFinding finding,
+        HashSet<string> validFilePaths)
+    {
+        var filePath = finding.FilePath ?? string.Empty;
+
+        if (string.IsNullOrEmpty(filePath))
+        {
+            _logger.LogWarning("Finding '{Title}' has no filePath, skipping", finding.Title);
+            return null;
+        }
+
+        var matchedPath = FindMatchingFilePath(filePath, validFilePaths);
+
+        if (matchedPath == null)
+        {
+            _logger.LogWarning("Finding '{Title}' references unknown file '{FilePath}', skipping",
+                finding.Title, filePath);
+            return null;
+        }
+
+        return new SecurityFinding(
+            Id: finding.RuleId,
+            Title: finding.Title,
+            Description: finding.Description,
+            SeverityLevel: ParseSeverity(finding.Severity),
+            FilePath: matchedPath,
+            LineNumber: finding.LineNumber,
+            CodeSnippet: finding.CodeSnippet,
+            Remediation: finding.Remediation
+        );
+    }
+
+    /// <summary>
+    /// Finds a matching file path from the valid paths, handling path variations.
+    /// </summary>
+    internal static string? FindMatchingFilePath(string responsePath, HashSet<string> validPaths)
+    {
+        if (validPaths.Contains(responsePath))
+        {
+            return responsePath;
+        }
+
+        var normalizedResponsePath = responsePath.Replace('\\', '/');
+
+        foreach (var validPath in validPaths)
+        {
+            var normalizedValidPath = validPath.Replace('\\', '/');
+
+            if (normalizedResponsePath.Equals(normalizedValidPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return validPath;
+            }
+
+            if (normalizedValidPath.EndsWith(normalizedResponsePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return validPath;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -414,6 +707,58 @@ public class SecurityAnalyzer : ISecurityAnalyzer
 
             return matchesCategory;
         })];
+    }
+
+    /// <summary>
+    /// Splits files into batches based on batch size and token limits.
+    /// </summary>
+    internal List<Dictionary<string, string>> CreateBatches(
+        string[] filePaths,
+        Dictionary<string, string> fileContents)
+    {
+        var batches = new List<Dictionary<string, string>>();
+        var currentBatch = new Dictionary<string, string>();
+        var currentTokenEstimate = 0;
+
+        foreach (var filePath in filePaths)
+        {
+            if (!fileContents.TryGetValue(filePath, out var content))
+            {
+                continue;
+            }
+
+            var fileTokenEstimate = EstimateTokens(filePath, content);
+
+            var wouldExceedBatchSize = currentBatch.Count >= _rulesConfig.BatchSize;
+            var wouldExceedTokenLimit = currentTokenEstimate + fileTokenEstimate > _rulesConfig.MaxBatchTokens;
+
+            if (currentBatch.Count > 0 && (wouldExceedBatchSize || wouldExceedTokenLimit))
+            {
+                batches.Add(currentBatch);
+                currentBatch = new Dictionary<string, string>();
+                currentTokenEstimate = 0;
+            }
+
+            currentBatch[filePath] = content;
+            currentTokenEstimate += fileTokenEstimate;
+        }
+
+        if (currentBatch.Count > 0)
+        {
+            batches.Add(currentBatch);
+        }
+
+        return batches;
+    }
+
+    /// <summary>
+    /// Estimates the token count for a file including delimiters.
+    /// </summary>
+    private static int EstimateTokens(string filePath, string content)
+    {
+        var contentTokens = content.Length / 4;
+        var overhead = 50 + (filePath.Length / 4);
+        return contentTokens + overhead;
     }
 
     /// <summary>
