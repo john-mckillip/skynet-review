@@ -13,7 +13,7 @@ public class SecurityRulesConfig
     /// <summary>
     /// The maximum number of tokens allowed in a single batch for AI processing.
     /// </summary>
-    public int MaxBatchTokens { get; set; } =  100000;
+    public int MaxBatchTokens { get; set; } = 100000;
     /// <summary>
     /// Whether to enable batching of code files for analysis.
     /// </summary>

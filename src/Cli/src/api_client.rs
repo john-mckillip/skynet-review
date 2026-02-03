@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest::Client;
 use std::time::Duration;
+use log::{debug};
 
 pub struct ApiClient {
     base_url: String,
@@ -148,7 +149,7 @@ impl ApiClient {
                         Some("finding") => {
                             match serde_json::from_str::<SecurityFinding>(data) {
                                 Ok(finding) => on_finding(finding),
-                                Err(e) => eprintln!("Warning: Failed to parse finding: {e} (data: {data})"),
+                                Err(e) => debug!("Warning: Failed to parse finding: {e} (data: {data})"),
                             }
                         }
                         Some("error") => {
