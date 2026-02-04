@@ -48,6 +48,10 @@ enum Commands {
         /// Only include these file extensions (comma-separated)
         #[arg(long, value_delimiter = ',')]
         include_ext: Option<Vec<String>>,
+
+        /// Disable streaming and wait for all results at once
+        #[arg(long)]
+        no_stream: bool,
     },
 
     /// Check if services are healthy
@@ -66,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
             staged,
             commit,
             include_ext,
+            no_stream,
         } => {
             // Determine which files to analyze
             let files_to_analyze = if git_diff {
@@ -95,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
             }
             println!();
 
-            match analyze_files(&client, files_to_analyze).await {
+            match analyze_files(&client, files_to_analyze, !no_stream).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
                     eprintln!("{} {}", "Error:".red().bold(), e);
@@ -175,7 +180,7 @@ fn apply_extension_filter(files: Vec<PathBuf>, include_ext: &Option<Vec<String>>
     }
 }
 
-async fn analyze_files(client: &ApiClient, files: Vec<PathBuf>) -> anyhow::Result<()> {
+async fn analyze_files(client: &ApiClient, files: Vec<PathBuf>, stream: bool) -> anyhow::Result<()> {
     // Read file contents
     let mut file_contents = std::collections::HashMap::new();
 
@@ -200,11 +205,34 @@ async fn analyze_files(client: &ApiClient, files: Vec<PathBuf>) -> anyhow::Resul
         repository_context: None,
     };
 
-    // Call API
-    let results = client.analyze(request).await?;
+    if stream {
+        // Streaming mode - display findings as they arrive
+        output::reset_finding_counter();
+        println!("{}", "Security Analysis (streaming)".green().bold());
+        println!();
 
-    // Display results
-    output::display_results(&results);
+        let mut finding_count = 0;
+        client
+            .analyze_stream(request, |finding| {
+                finding_count += 1;
+                output::display_finding_streaming(&finding);
+            })
+            .await?;
+
+        if finding_count == 0 {
+            println!("  {}", "No issues found!".green());
+        } else {
+            println!(
+                "\n{} Found {} issue(s)",
+                "Summary:".cyan().bold(),
+                finding_count
+            );
+        }
+    } else {
+        // Batched mode - wait for all results
+        let results = client.analyze(request).await?;
+        output::display_results(&results);
+    }
 
     Ok(())
 }

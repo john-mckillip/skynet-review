@@ -1,6 +1,7 @@
 using GitHub.Copilot.SDK;
 using SkynetReview.Shared.Models;
 using SkynetReview.SecurityAgent.Configuration;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using YamlDotNet.Serialization;
@@ -11,7 +12,7 @@ namespace SkynetReview.SecurityAgent.Services;
 public class SecurityAnalyzer : ISecurityAnalyzer
 {
     private readonly ILogger<SecurityAnalyzer> _logger;
-    private readonly SecurityRulesConfig _rulesConfig;
+    internal SecurityRulesConfig _rulesConfig;
 
     public SecurityAnalyzer(
         ILogger<SecurityAnalyzer> logger, 
@@ -30,20 +31,100 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         await using var client = new CopilotClient();
         await client.StartAsync();
 
+        if (_rulesConfig.EnableBatching && request.FilePaths.Length > 1)
+        {
+            var batches = CreateBatches(request.FilePaths, request.FileContents);
+            _logger.LogInformation("Created {BatchCount} batches for analysis", batches.Count);
+
+            foreach (var batch in batches)
+            {
+                var batchFindings = await AnalyzeBatchAsync(client, batch);
+                findings.AddRange(batchFindings);
+            }
+        }
+        else
+        {
+            foreach (var filePath in request.FilePaths)
+            {
+                if (!request.FileContents.TryGetValue(filePath, out var content))
+                {
+                    _logger.LogWarning("File content not found for {FilePath}", filePath);
+                    continue;
+                }
+
+                var fileFindings = await AnalyzeFileAsync(client, filePath, content);
+                findings.AddRange(fileFindings);
+            }
+        }
+
+        _logger.LogInformation("Security analysis complete. Found {FindingCount} issues", findings.Count);
+        return [.. findings];
+    }
+
+    public async IAsyncEnumerable<SecurityFinding> AnalyzeStreamAsync(
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting streaming security analysis for {FileCount} files", request.FilePaths.Length);
+
+        await using var client = new CopilotClient();
+        await client.StartAsync(cancellationToken);
+
+        var useBatching = _rulesConfig.EnableBatching && request.FilePaths.Length > 1;
+        var findings = useBatching
+            ? StreamBatchedAnalysis(client, request, cancellationToken)
+            : StreamIndividualAnalysis(client, request, cancellationToken);
+
+        await foreach (var finding in findings)
+        {
+            yield return finding;
+        }
+
+        _logger.LogInformation("Streaming security analysis complete");
+    }
+
+    private async IAsyncEnumerable<SecurityFinding> StreamBatchedAnalysis(
+        CopilotClient client,
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var batches = CreateBatches(request.FilePaths, request.FileContents);
+        _logger.LogInformation("Created {BatchCount} batches for streaming analysis", batches.Count);
+
+        foreach (var batch in batches)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogInformation("Processing batch of {FileCount} files", batch.Count);
+
+            foreach (var finding in await AnalyzeBatchAsync(client, batch))
+            {
+                yield return finding;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<SecurityFinding> StreamIndividualAnalysis(
+        CopilotClient client,
+        AnalysisRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
         foreach (var filePath in request.FilePaths)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!request.FileContents.TryGetValue(filePath, out var content))
             {
                 _logger.LogWarning("File content not found for {FilePath}", filePath);
                 continue;
             }
 
-            var fileFindings = await AnalyzeFileAsync(client, filePath, content);
-            findings.AddRange(fileFindings);
-        }
+            _logger.LogInformation("Analyzing file: {FilePath}", filePath);
 
-        _logger.LogInformation("Security analysis complete. Found {FindingCount} issues", findings.Count);
-        return [.. findings];
+            foreach (var finding in await AnalyzeFileAsync(client, filePath, content))
+            {
+                yield return finding;
+            }
+        }
     }
 
     /// <summary>
@@ -87,8 +168,9 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     {
         return new SecurityRulesConfig
         {
-            Model = "gpt-5",
+            Model = "gpt-5 mini",
             SystemPrompt = "You are a security analysis expert. Analyze the following code for security vulnerabilities.",
+            IncludeRulesInPrompt = true,
             Rules =
             [
                 new() { Category = "SQL Injection", Description = "SQL Injection vulnerabilities", Enabled = true },
@@ -116,22 +198,47 @@ public class SecurityAnalyzer : ISecurityAnalyzer
 
         await using var session = await client.CreateSessionAsync(new SessionConfig
         {
-            Model = _rulesConfig.Model
+            Model = _rulesConfig.Model,
+            Streaming = true
         });
-
+        
         var prompt = BuildSecurityPrompt(filePath, content);
         var responseContent = new StringBuilder();
         var done = new TaskCompletionSource();
 
         session.On(evt =>
         {
-            if (evt is AssistantMessageEvent msg)
+            _logger.LogDebug("Copilot event received: {EventType}", evt.GetType().Name);
+
+            switch (evt)
             {
-                responseContent.Append(msg.Data.Content);
-            }
-            else if (evt is SessionIdleEvent)
-            {
-                done.SetResult();
+                case AssistantMessageDeltaEvent delta:
+                    // Incremental text chunk
+                    responseContent.Append(delta.Data.DeltaContent);
+                    break;
+                case AssistantReasoningDeltaEvent reasoningDelta:
+                     // Incremental reasoning chunk (model-dependent)
+                    responseContent.Append(reasoningDelta.Data.DeltaContent);
+                    break;
+                case AssistantMessageEvent msg:
+                    // Final complete message
+                    responseContent.Append(msg.Data.Content);
+                    break;
+                case AssistantReasoningEvent reasoning:
+                    // Final reasoning content
+                    responseContent.Append(reasoning.Data.Content);
+                    break;
+                case SessionIdleEvent:
+                    _logger.LogDebug("Session idle. Response length: {Length}", responseContent.Length);
+                    done.SetResult();
+                    break;
+                case SessionErrorEvent error:
+                    _logger.LogError("Copilot session error: {Error}", error.Data?.Message ?? "Unknown error");
+                    done.TrySetException(new Exception(error.Data?.Message ?? "Copilot session error"));
+                    break;
+                default:
+                    _logger.LogWarning("Unhandled Copilot event type: {EventType}", evt.GetType().FullName);
+                    break;
             }
         });
 
@@ -145,7 +252,10 @@ public class SecurityAnalyzer : ISecurityAnalyzer
             findings = ParseCopilotResponse(responseContent.ToString(), filePath);
 
             // Filter out findings for disabled rule categories
-            findings = FilterFindingsByEnabledRules(findings);
+            if (_rulesConfig.IncludeRulesInPrompt)
+            {
+                findings = FilterFindingsByEnabledRules(findings);
+            }  
         }
         catch (Exception ex)
         {
@@ -161,24 +271,27 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     /// <param name="filePath">The path of the file being analyzed.</param>
     /// <param name="content">The content of the file to analyze.</param>
     /// <returns>A string containing the prompt for Copilot.</returns>
-    private string BuildSecurityPrompt(string filePath, string content)
+    internal string BuildSecurityPrompt(string filePath, string content)
     {
         var sb = new StringBuilder();
         
         // Add system prompt from config
         sb.AppendLine(_rulesConfig.SystemPrompt);
         sb.AppendLine();
-        
-        // Add enabled rules
-        sb.AppendLine("Focus on:");
-        foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+
+        // Add enabled rules if configured
+        if (_rulesConfig.IncludeRulesInPrompt)
         {
-            sb.AppendLine($"- {rule.Description}");
+            sb.AppendLine("Focus on:");
+            foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+            {
+                sb.AppendLine($"- {rule.Description}");
+            }
+            sb.AppendLine();
         }
-        
-        sb.AppendLine();
+
         sb.AppendLine($"File: {filePath}");
-        sb.AppendLine("```csharp");
+        sb.AppendLine($"```{GetLanguageFromFilePath(filePath)}");
         sb.AppendLine(content);
         sb.AppendLine("```");
         sb.AppendLine();
@@ -187,6 +300,278 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         sb.AppendLine(_rulesConfig.OutputFormat);
 
         return sb.ToString();
+    }
+
+    internal string BuildBatchedSecurityPrompt(Dictionary<string, string> files)
+    {
+        var sb = new StringBuilder();
+
+        // Add system prompt from config
+        sb.AppendLine(_rulesConfig.SystemPrompt);
+        sb.AppendLine();
+
+        // Add enabled rules if configured
+        if (_rulesConfig.IncludeRulesInPrompt)
+        {
+            sb.AppendLine("Focus on:");
+            foreach (var rule in _rulesConfig.Rules.Where(r => r.Enabled))
+            {
+                sb.AppendLine($"- {rule.Description}");
+            }
+            sb.AppendLine();
+        }
+
+        foreach (var (filePath, content) in files)
+        {
+            sb.AppendLine($"File: {filePath}");
+            sb.AppendLine($"```{GetLanguageFromFilePath(filePath)}");
+            sb.AppendLine(content);
+            sb.AppendLine("```");
+            sb.AppendLine();
+        }
+
+        // Add output format from config
+        sb.AppendLine(_rulesConfig.OutputFormat);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Analyzes a batch of files for security issues using a single Copilot session.
+    /// </summary>
+    private async Task<List<SecurityFinding>> AnalyzeBatchAsync(
+        CopilotClient client,
+        Dictionary<string, string> batch)
+    {
+        var findings = new List<SecurityFinding>();
+        var validFilePaths = batch.Keys.ToHashSet();
+
+        _logger.LogInformation("Analyzing batch of {FileCount} files: {Files}",
+            batch.Count,
+            string.Join(", ", batch.Keys.Select(Path.GetFileName)));
+
+        await using var session = await client.CreateSessionAsync(new SessionConfig
+        {
+            Model = _rulesConfig.Model,
+            Streaming = true
+        });
+
+        var prompt = BuildBatchedSecurityPrompt(batch);
+        var responseContent = new StringBuilder();
+        var done = new TaskCompletionSource();
+
+        session.On(evt =>
+        {
+            _logger.LogDebug("Copilot event received: {EventType}", evt.GetType().Name);
+
+            switch (evt)
+            {
+                case AssistantMessageDeltaEvent delta:
+                    responseContent.Append(delta.Data.DeltaContent);
+                    break;
+                case AssistantReasoningDeltaEvent reasoningDelta:
+                    responseContent.Append(reasoningDelta.Data.DeltaContent);
+                    break;
+                case AssistantMessageEvent msg:
+                    responseContent.Append(msg.Data.Content);
+                    break;
+                case AssistantReasoningEvent reasoning:
+                    responseContent.Append(reasoning.Data.Content);
+                    break;
+                case SessionIdleEvent:
+                    _logger.LogDebug("Session idle. Response length: {Length}", responseContent.Length);
+                    done.SetResult();
+                    break;
+                case SessionErrorEvent error:
+                    _logger.LogError("Copilot session error: {Error}", error.Data?.Message ?? "Unknown error");
+                    done.TrySetException(new Exception(error.Data?.Message ?? "Copilot session error"));
+                    break;
+            }
+        });
+
+        try
+        {
+            await session.SendAsync(new MessageOptions { Prompt = prompt });
+            await done.Task;
+
+            _logger.LogInformation("Received batch response from Copilot for {FileCount} files", batch.Count);
+
+            findings = ParseBatchedCopilotResponse(responseContent.ToString(), validFilePaths);
+
+            if (_rulesConfig.IncludeRulesInPrompt)
+            {
+                findings = FilterFindingsByEnabledRules(findings);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing batch of {FileCount} files", batch.Count);
+
+            // Fallback: try analyzing files individually
+            _logger.LogWarning("Falling back to individual file analysis for failed batch");
+            foreach (var (filePath, content) in batch)
+            {
+                try
+                {
+                    var fileFindings = await AnalyzeFileAsync(client, filePath, content);
+                    findings.AddRange(fileFindings);
+                }
+                catch (Exception fileEx)
+                {
+                    _logger.LogError(fileEx, "Error analyzing file {FilePath}", filePath);
+                }
+            }
+        }
+
+        return findings;
+    }
+
+    /// <summary>
+    /// Parses the Copilot response for batched multi-file analysis.
+    /// </summary>
+    internal List<SecurityFinding> ParseBatchedCopilotResponse(
+        string response,
+        HashSet<string> validFilePaths)
+    {
+        var findings = new List<SecurityFinding>();
+        var parsedFindings = ExtractFindingsFromJson(response);
+
+        if (parsedFindings is null)
+            return findings;
+
+        foreach (var finding in parsedFindings)
+        {
+            var converted = TryConvertToSecurityFinding(finding, validFilePaths);
+            if (converted is not null)
+                findings.Add(converted);
+        }
+
+        return findings;
+    }
+
+    /// <summary>
+    /// Extracts and deserializes findings from a JSON response string.
+    /// </summary>
+    private CopilotFinding[]? ExtractFindingsFromJson(string response)
+    {
+        // Strip markdown code fences if present
+        var cleanedResponse = StripMarkdownCodeFences(response);
+
+        _logger.LogDebug("Cleaned response:\n{CleanedResponse}", cleanedResponse);
+
+        var jsonStart = cleanedResponse.IndexOf('[');
+        var jsonEnd = cleanedResponse.LastIndexOf(']');
+
+        if (jsonStart < 0 || jsonEnd <= jsonStart)
+        {
+            _logger.LogWarning("No JSON array found in batched response");
+            return null;
+        }
+
+        try
+        {
+            var json = cleanedResponse.Substring(jsonStart, jsonEnd - jsonStart + 1);
+            _logger.LogDebug("Extracted JSON:\n{Json}", json);
+
+            return JsonSerializer.Deserialize<CopilotFinding[]>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to parse batched Copilot response");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Strips markdown code fences from a response string.
+    /// </summary>
+    private static string StripMarkdownCodeFences(string response)
+    {
+        var result = response;
+
+        // Use regex to remove markdown code fences more robustly
+        // Match ```json or ``` at start (with optional content before)
+        var codeBlockPattern = new System.Text.RegularExpressions.Regex(
+            @"```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var match = codeBlockPattern.Match(result);
+        if (match.Success)
+        {
+            // Extract content from within the code block
+            result = match.Groups[1].Value;
+        }
+
+        return result.Trim();
+    }
+
+    /// <summary>
+    /// Converts a CopilotFinding to a SecurityFinding, validating the file path.
+    /// </summary>
+    private SecurityFinding? TryConvertToSecurityFinding(
+        CopilotFinding finding,
+        HashSet<string> validFilePaths)
+    {
+        var filePath = finding.FilePath ?? string.Empty;
+
+        if (string.IsNullOrEmpty(filePath))
+        {
+            _logger.LogWarning("Finding '{Title}' has no filePath, skipping", finding.Title);
+            return null;
+        }
+
+        var matchedPath = FindMatchingFilePath(filePath, validFilePaths);
+
+        if (matchedPath == null)
+        {
+            _logger.LogWarning("Finding '{Title}' references unknown file '{FilePath}', skipping",
+                finding.Title, filePath);
+            return null;
+        }
+
+        return new SecurityFinding(
+            Id: finding.RuleId ?? string.Empty,
+            Title: finding.Title ?? string.Empty,
+            Description: finding.Description ?? string.Empty,
+            SeverityLevel: ParseSeverity(finding.Severity ?? string.Empty),
+            FilePath: matchedPath,
+            LineNumber: finding.LineNumber,
+            CodeSnippet: finding.CodeSnippet,
+            Remediation: finding.Remediation ?? string.Empty
+        );
+    }
+
+    /// <summary>
+    /// Finds a matching file path from the valid paths, handling path variations.
+    /// </summary>
+    internal static string? FindMatchingFilePath(string responsePath, HashSet<string> validPaths)
+    {
+        if (validPaths.Contains(responsePath))
+        {
+            return responsePath;
+        }
+
+        var normalizedResponsePath = responsePath.Replace('\\', '/');
+
+        foreach (var validPath in validPaths)
+        {
+            var normalizedValidPath = validPath.Replace('\\', '/');
+
+            if (normalizedResponsePath.Equals(normalizedValidPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return validPath;
+            }
+
+            if (normalizedValidPath.EndsWith(normalizedResponsePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return validPath;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -220,14 +605,14 @@ public class SecurityAnalyzer : ISecurityAnalyzer
                     foreach (var finding in parsedFindings)
                     {
                         findings.Add(new SecurityFinding(
-                            Id: finding.RuleId,
-                            Title: finding.Title,
-                            Description: finding.Description,
-                            SeverityLevel: ParseSeverity(finding.Severity),
+                            Id: finding.RuleId ?? string.Empty,
+                            Title: finding.Title ?? string.Empty,
+                            Description: finding.Description ?? string.Empty,
+                            SeverityLevel: ParseSeverity(finding.Severity ?? string.Empty),
                             FilePath: filePath,
                             LineNumber: finding.LineNumber,
                             CodeSnippet: finding.CodeSnippet,
-                            Remediation: finding.Remediation
+                            Remediation: finding.Remediation ?? string.Empty
                         ));
                     }
                 }
@@ -245,6 +630,46 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         return findings;
     }
     
+    /// <summary>
+    /// Gets the markdown language identifier for a file based on its extension.
+    /// </summary>
+    /// <param name="filePath">The file path to get the language for.</param>
+    /// <returns>A markdown language identifier string.</returns>
+    internal static string GetLanguageFromFilePath(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".cs" => "csharp",
+            ".js" => "javascript",
+            ".ts" => "typescript",
+            ".jsx" => "jsx",
+            ".tsx" => "tsx",
+            ".py" => "python",
+            ".java" => "java",
+            ".go" => "go",
+            ".rs" => "rust",
+            ".rb" => "ruby",
+            ".php" => "php",
+            ".swift" => "swift",
+            ".kt" or ".kts" => "kotlin",
+            ".scala" => "scala",
+            ".c" or ".h" => "c",
+            ".cpp" or ".cc" or ".cxx" or ".hpp" => "cpp",
+            ".sql" => "sql",
+            ".html" or ".htm" => "html",
+            ".css" => "css",
+            ".scss" => "scss",
+            ".json" => "json",
+            ".xml" => "xml",
+            ".yaml" or ".yml" => "yaml",
+            ".sh" or ".bash" => "bash",
+            ".ps1" => "powershell",
+            ".md" => "markdown",
+            _ => "text"
+        };
+    }
+
     /// <summary>
     /// Parses the severity string into a Severity enum.
     /// </summary>
@@ -271,37 +696,40 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     {
         var enabledCategories = _rulesConfig.Rules
             .Where(r => r.Enabled)
-            .Select(r => r.Category.ToLower())
+            .Select(r => NormalizeForMatching(r.Category))
             .ToHashSet();
 
         return [.. findings.Where(finding =>
         {
-            // Try to match finding to a rule category
-            // Check if any enabled category is a substring of the finding, or vice versa
+            // Normalize all finding fields for comparison
+            var findingTitle = NormalizeForMatching(finding.Title);
+            var findingId = NormalizeForMatching(finding.Id);
+            var findingDescription = NormalizeForMatching(finding.Description);
+
+            // Try to match finding to a rule category using keyword overlap
             var matchesCategory = enabledCategories.Any(category =>
             {
-                var findingTitle = finding.Title.ToLower();
-                var findingId = finding.Id.ToLower();
-                var findingDescription = finding.Description.ToLower();
-                
-                // Remove common suffixes/prefixes for matching
-                var categoryNormalized = category.Replace(" ", "").Replace("s", "");
-                var titleNormalized = findingTitle.Replace(" ", "").Replace("s", "");
-                var idNormalized = findingId.Replace("-", "").Replace("s", "");
-                
-                // Match if category contains any key words from the finding or vice versa
-                return findingTitle.Contains(category) || 
+                // Extract key words from category (split and filter short words)
+                var categoryWords = category.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => w.Length > 3)
+                    .ToList();
+
+                // Check if any category keyword appears in the finding
+                var hasKeywordMatch = categoryWords.Any(word =>
+                    findingTitle.Contains(word) ||
+                    findingDescription.Contains(word) ||
+                    findingId.Contains(word));
+
+                // Also check full category match
+                return hasKeywordMatch ||
+                    findingTitle.Contains(category) ||
                     category.Contains(findingTitle) ||
-                    findingId.Contains(category.Replace(" ", "")) ||
-                    findingDescription.Contains(category) ||
-                    titleNormalized.Contains(categoryNormalized) ||
-                    categoryNormalized.Contains(titleNormalized) ||
-                    idNormalized.Contains(categoryNormalized);
+                    findingDescription.Contains(category);
             });
 
             if (!matchesCategory)
             {
-                _logger.LogInformation("Filtering out finding {Id} - {Title} (no matching enabled category)", 
+                _logger.LogInformation("Filtering out finding {Id} - {Title} (no matching enabled category)",
                     finding.Id, finding.Title);
             }
 
@@ -310,26 +738,90 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     }
 
     /// <summary>
+    /// Splits files into batches based on batch size and token limits.
+    /// </summary>
+    internal List<Dictionary<string, string>> CreateBatches(
+        string[] filePaths,
+        Dictionary<string, string> fileContents)
+    {
+        var batches = new List<Dictionary<string, string>>();
+        var currentBatch = new Dictionary<string, string>();
+        var currentTokenEstimate = 0;
+
+        foreach (var filePath in filePaths)
+        {
+            if (!fileContents.TryGetValue(filePath, out var content))
+            {
+                continue;
+            }
+
+            var fileTokenEstimate = EstimateTokens(filePath, content);
+
+            var wouldExceedBatchSize = currentBatch.Count >= _rulesConfig.BatchSize;
+            var wouldExceedTokenLimit = currentTokenEstimate + fileTokenEstimate > _rulesConfig.MaxBatchTokens;
+
+            if (currentBatch.Count > 0 && (wouldExceedBatchSize || wouldExceedTokenLimit))
+            {
+                batches.Add(currentBatch);
+                currentBatch = new Dictionary<string, string>();
+                currentTokenEstimate = 0;
+            }
+
+            currentBatch[filePath] = content;
+            currentTokenEstimate += fileTokenEstimate;
+        }
+
+        if (currentBatch.Count > 0)
+        {
+            batches.Add(currentBatch);
+        }
+
+        return batches;
+    }
+
+    /// <summary>
+    /// Estimates the token count for a file including delimiters.
+    /// </summary>
+    private static int EstimateTokens(string filePath, string content)
+    {
+        var contentTokens = content.Length / 4;
+        var overhead = 50 + (filePath.Length / 4);
+        return contentTokens + overhead;
+    }
+
+    /// <summary>
+    /// Normalizes text for fuzzy matching by lowercasing, replacing ampersand with 'and', and removing special characters.
+    /// </summary>
+    private static string NormalizeForMatching(string text)
+    {
+        return text.ToLower()
+            .Replace("&", "and")
+            .Replace("-", " ")
+            .Replace("_", " ");
+    }
+
+    /// <summary>
     /// Internal class to represent the structure of findings returned by Copilot.
     /// </summary>
     private sealed class CopilotFinding
     {
+        public string? FilePath { get; set; } = null;
         /// <summary>
         /// The unique identifier of the security rule.
         /// </summary>
-        public string RuleId { get; set; } = string.Empty;
+        public string? RuleId { get; set; } = null;
         /// <summary>
         /// The title of the security finding.
         /// </summary>
-        public string Title { get; set; } = string.Empty;
+        public string? Title { get; set; } = null;
         /// <summary>
         /// The detailed description of the security finding.
         /// </summary>
-        public string Description { get; set; } = string.Empty;
+        public string? Description { get; set; } = null;
         /// <summary>
         /// The severity level of the security finding.
         /// </summary>
-        public string Severity { get; set; } = string.Empty;
+        public string? Severity { get; set; } = null;
         /// <summary>
         /// The line number where the issue was found.
         /// </summary>
@@ -341,6 +833,6 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         /// <summary>
         /// The recommended remediation for the finding.
         /// </summary>
-        public string Remediation { get; set; } = string.Empty;
+        public string? Remediation { get; set; } = null;
     }
 }

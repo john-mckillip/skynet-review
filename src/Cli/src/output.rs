@@ -1,5 +1,17 @@
 use crate::models::{AnalysisResult, SecurityFinding};
 use colored::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static FINDING_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+pub fn reset_finding_counter() {
+    FINDING_COUNTER.store(0, Ordering::SeqCst);
+}
+
+pub fn display_finding_streaming(finding: &SecurityFinding) {
+    let number = FINDING_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
+    display_finding(number, finding);
+}
 
 pub fn display_results(results: &[AnalysisResult]) {
     for result in results {

@@ -12,4 +12,8 @@
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/SkynetReview.Shared.csproj" />
   </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/SkynetReview.SecurityAgent.Tests/">
+    <Project Path="tests/SkynetReview.SecurityAgent.Tests/SkynetReview.SecurityAgent.Tests.csproj" />
+  </Folder>
 </Solution>

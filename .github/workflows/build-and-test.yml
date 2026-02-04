@@ -1,0 +1,150 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main, feature/*]
+  pull_request:
+    branches: [main]
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  build-shared:
+    name: Build Shared Library
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore src/Shared/SkynetReview.Shared.csproj
+
+      - name: Build
+        run: dotnet build src/Shared/SkynetReview.Shared.csproj --configuration Release --no-restore
+
+  build-gateway:
+    name: Build Gateway
+    runs-on: ubuntu-latest
+    needs: build-shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore src/Gateway/SkynetReview.Gateway.csproj
+
+      - name: Build
+        run: dotnet build src/Gateway/SkynetReview.Gateway.csproj --configuration Release --no-restore
+
+  build-fileservice:
+    name: Build FileService
+    runs-on: ubuntu-latest
+    needs: build-shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore src/FileService/SkynetReview.FileService.csproj
+
+      - name: Build
+        run: dotnet build src/FileService/SkynetReview.FileService.csproj --configuration Release --no-restore
+
+  build-securityagent:
+    name: Build SecurityAgent
+    runs-on: ubuntu-latest
+    needs: build-shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore src/SecurityAgent/SkynetReview.SecurityAgent.csproj
+
+      - name: Build
+        run: dotnet build src/SecurityAgent/SkynetReview.SecurityAgent.csproj --configuration Release --no-restore
+
+  test-securityagent:
+    name: Test SecurityAgent
+    runs-on: ubuntu-latest
+    needs: build-securityagent
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore tests/SkynetReview.SecurityAgent.Tests/SkynetReview.SecurityAgent.Tests.csproj
+
+      - name: Build tests
+        run: dotnet build tests/SkynetReview.SecurityAgent.Tests/SkynetReview.SecurityAgent.Tests.csproj --configuration Release --no-restore
+
+      - name: Run tests with coverage
+        run: |
+          dotnet test tests/SkynetReview.SecurityAgent.Tests/SkynetReview.SecurityAgent.Tests.csproj \
+            --configuration Release \
+            --no-build \
+            --logger "trx;LogFileName=test-results.trx" \
+            --results-directory ./TestResults \
+            --collect:"XPlat Code Coverage" \
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[*]Microsoft.AspNetCore.OpenApi.Generated.*" \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Program.cs" \
+               DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute="GeneratedCodeAttribute"
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: SecurityAgent Test Results
+          path: ./TestResults/*.trx
+          reporter: dotnet-trx
+
+      - name: Generate Coverage Report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: ./TestResults/**/coverage.opencover.xml
+          targetdir: ./CoverageReport
+          reporttypes: HtmlInline_AzurePipelines;Cobertura;MarkdownSummaryGithub
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ./CoverageReport
+
+      - name: Add Coverage PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          recreate: true
+          path: ./CoverageReport/SummaryGithub.md
+
+      - name: Write Coverage Summary to Job Summary
+        if: always()
+        run: cat ./CoverageReport/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
