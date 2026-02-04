@@ -454,8 +454,13 @@ public class SecurityAnalyzer : ISecurityAnalyzer
     /// </summary>
     private CopilotFinding[]? ExtractFindingsFromJson(string response)
     {
-        var jsonStart = response.IndexOf('[');
-        var jsonEnd = response.LastIndexOf(']');
+        // Strip markdown code fences if present
+        var cleanedResponse = StripMarkdownCodeFences(response);
+
+        _logger.LogDebug("Cleaned response:\n{CleanedResponse}", cleanedResponse);
+
+        var jsonStart = cleanedResponse.IndexOf('[');
+        var jsonEnd = cleanedResponse.LastIndexOf(']');
 
         if (jsonStart < 0 || jsonEnd <= jsonStart)
         {
@@ -465,8 +470,8 @@ public class SecurityAnalyzer : ISecurityAnalyzer
 
         try
         {
-            var json = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
-            _logger.LogDebug("Parsing batched JSON response: {Json}", json);
+            var json = cleanedResponse.Substring(jsonStart, jsonEnd - jsonStart + 1);
+            _logger.LogDebug("Extracted JSON:\n{Json}", json);
 
             return JsonSerializer.Deserialize<CopilotFinding[]>(json, new JsonSerializerOptions
             {
@@ -478,6 +483,29 @@ public class SecurityAnalyzer : ISecurityAnalyzer
             _logger.LogError(ex, "Failed to parse batched Copilot response");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Strips markdown code fences from a response string.
+    /// </summary>
+    private static string StripMarkdownCodeFences(string response)
+    {
+        var result = response;
+
+        // Use regex to remove markdown code fences more robustly
+        // Match ```json or ``` at start (with optional content before)
+        var codeBlockPattern = new System.Text.RegularExpressions.Regex(
+            @"```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        var match = codeBlockPattern.Match(result);
+        if (match.Success)
+        {
+            // Extract content from within the code block
+            result = match.Groups[1].Value;
+        }
+
+        return result.Trim();
     }
 
     /// <summary>
@@ -505,14 +533,14 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         }
 
         return new SecurityFinding(
-            Id: finding.RuleId,
-            Title: finding.Title,
-            Description: finding.Description,
-            SeverityLevel: ParseSeverity(finding.Severity),
+            Id: finding.RuleId ?? string.Empty,
+            Title: finding.Title ?? string.Empty,
+            Description: finding.Description ?? string.Empty,
+            SeverityLevel: ParseSeverity(finding.Severity ?? string.Empty),
             FilePath: matchedPath,
             LineNumber: finding.LineNumber,
             CodeSnippet: finding.CodeSnippet,
-            Remediation: finding.Remediation
+            Remediation: finding.Remediation ?? string.Empty
         );
     }
 
@@ -577,14 +605,14 @@ public class SecurityAnalyzer : ISecurityAnalyzer
                     foreach (var finding in parsedFindings)
                     {
                         findings.Add(new SecurityFinding(
-                            Id: finding.RuleId,
-                            Title: finding.Title,
-                            Description: finding.Description,
-                            SeverityLevel: ParseSeverity(finding.Severity),
+                            Id: finding.RuleId ?? string.Empty,
+                            Title: finding.Title ?? string.Empty,
+                            Description: finding.Description ?? string.Empty,
+                            SeverityLevel: ParseSeverity(finding.Severity ?? string.Empty),
                             FilePath: filePath,
                             LineNumber: finding.LineNumber,
                             CodeSnippet: finding.CodeSnippet,
-                            Remediation: finding.Remediation
+                            Remediation: finding.Remediation ?? string.Empty
                         ));
                     }
                 }
@@ -781,19 +809,19 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         /// <summary>
         /// The unique identifier of the security rule.
         /// </summary>
-        public string RuleId { get; set; } = string.Empty;
+        public string? RuleId { get; set; } = null;
         /// <summary>
         /// The title of the security finding.
         /// </summary>
-        public string Title { get; set; } = string.Empty;
+        public string? Title { get; set; } = null;
         /// <summary>
         /// The detailed description of the security finding.
         /// </summary>
-        public string Description { get; set; } = string.Empty;
+        public string? Description { get; set; } = null;
         /// <summary>
         /// The severity level of the security finding.
         /// </summary>
-        public string Severity { get; set; } = string.Empty;
+        public string? Severity { get; set; } = null;
         /// <summary>
         /// The line number where the issue was found.
         /// </summary>
@@ -805,6 +833,6 @@ public class SecurityAnalyzer : ISecurityAnalyzer
         /// <summary>
         /// The recommended remediation for the finding.
         /// </summary>
-        public string Remediation { get; set; } = string.Empty;
+        public string? Remediation { get; set; } = null;
     }
 }

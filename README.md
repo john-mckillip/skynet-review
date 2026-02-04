@@ -706,15 +706,33 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [ ] Add Performance Analysis Agent
 - [ ] Add Code Standards/Style Agent
 - [ ] Implement caching for faster analysis
-- [ ] Add support for more languages (Python, JavaScript, Java)
+- [x] Add support for more languages (Python, JavaScript, Java)
 - [ ] Web UI for analysis results
-- [ ] CI/CD integration (GitHub Actions, Azure DevOps)
+- [x] CI/CD integration (GitHub Actions, Azure DevOps)
 - [ ] Historical analysis tracking
 - [ ] Custom security rules configuration
 - [ ] Report generation (PDF, HTML)
 - [ ] IDE extensions (VS Code, Visual Studio)
 
 ## 📋 Changelog
+
+### v1.2.0 (2026-02-03)
+
+**CI/CD Pipeline, Security Agent & CLI Updates**
+
+- ⚡ **Streaming Security Analysis**
+  - Added a new /api/analyze/stream endpoint in src/Gateway/Program.cs that returns findings incrementally using Server-Sent Events (SSE), enabling clients to display security issues as soon as they're detected. The endpoint handles streaming, error events, and completion summaries.
+  - Implemented the analyze_stream method in src/Cli/src/api_client.rs to consume the SSE stream, parse findings, and invoke a callback for each result.
+  - Updated CLI logic in src/Cli/src/main.rs to support streaming mode (default), with a new --no-stream flag to revert to batch mode. Streaming findings are displayed live using a new output function.
+
+- ⚡ **Developer Tooling and Build System**
+  - Added VSCode launch configurations for debugging services and tests, and new build/test tasks for each component in .vscode/launch.json and .vscode/tasks.json.
+  - Introduced a GitHub Actions workflow (.github/workflows/build-and-test.yml) to build all services and run/test SecurityAgent, including code coverage reporting and PR comments.
+
+ - ⚡ **Miscellaneous Improvements**
+  - Extended HTTP client timeouts in both Rust and C# to accommodate long-running analyses.
+  - Updated dependencies in src/Cli/Cargo.toml to support logging, streaming and async features.
+  - Registered the test project in the solution file for better IDE support.
 
 ### v1.1.0 (2026-01-27)
 

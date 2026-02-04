@@ -21,7 +21,7 @@ public class SecurityRulesConfig
     /// <summary>
     /// The AI model used for security analysis.
     /// </summary>
-    public string Model { get; set; } = "gpt-5"; 
+    public string Model { get; set; } = "gpt-5 mini"; 
     /// <summary>
     /// The system prompt used for guiding the security analysis.
     /// </summary>
